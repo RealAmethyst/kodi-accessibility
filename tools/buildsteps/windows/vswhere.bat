@@ -37,14 +37,41 @@ IF "%arch%" NEQ "x64" (
 
 SET vswhere="%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe"
 
-FOR /f "usebackq tokens=1* delims=" %%i in (`%vswhere% -latest -property installationPath`) do (
+REM Pick a Visual Studio this Kodi version actually supports, newest first, and
+REM ignore anything newer than it knows about.
+REM
+REM Two reasons this is not simply `vswhere -latest`:
+REM   * -latest returns the newest install of any version. On a machine that also
+REM     has Visual Studio 2026, that path contains neither "2019" nor "2022", so
+REM     the previous code fell through to its "15 2017" default and generated for
+REM     a toolset that is not installed. That failure surfaces much later and
+REM     looks completely unrelated to this file.
+REM   * Without -products *, vswhere ignores Build Tools installs, so a machine
+REM     whose only C++ compiler is Build Tools looks like it has none.
+REM
+REM Deliberately no quotes or parentheses inside the backquoted command: under
+REM usebackq those break cmd's tokenising, which mis-pairs the quotes around
+REM %vswhere% itself and fails with 'C:\Program' is not recognized.
+
+FOR /f "usebackq tokens=1* delims=" %%i in (`%vswhere% -products * -property installationPath`) do (
   IF EXIST "%%i\VC\Auxiliary\Build\vcvarsall.bat" (
-    SET vcvars="%%i\VC\Auxiliary\Build\vcvarsall.bat"
-    SET vsver=15 2017
-    ECHO %%i | findstr "2019" >NUL 2>NUL
-    IF NOT ERRORLEVEL 1 SET vsver=16 2019
-    ECHO %%i | findstr "2022" >NUL 2>NUL
-    IF NOT ERRORLEVEL 1 SET vsver=17 2022
+    ECHO %%i | findstr 2022 >NUL 2>NUL
+    IF NOT ERRORLEVEL 1 (
+      SET vcvars="%%i\VC\Auxiliary\Build\vcvarsall.bat"
+      SET vsver=17 2022
+    )
+  )
+)
+
+IF %vcvars%==no (
+  FOR /f "usebackq tokens=1* delims=" %%i in (`%vswhere% -products * -property installationPath`) do (
+    IF EXIST "%%i\VC\Auxiliary\Build\vcvarsall.bat" (
+      ECHO %%i | findstr 2019 >NUL 2>NUL
+      IF NOT ERRORLEVEL 1 (
+        SET vcvars="%%i\VC\Auxiliary\Build\vcvarsall.bat"
+        SET vsver=16 2019
+      )
+    )
   )
 )
 
