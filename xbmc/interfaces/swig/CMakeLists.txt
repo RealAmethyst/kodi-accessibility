@@ -20,13 +20,25 @@ function(generate_file file)
     set(JAVA_OPEN_OPTS --add-opens java.base/java.util=ALL-UNNAMED --add-opens java.base/java.util.regex=ALL-UNNAMED --add-opens java.base/java.io=ALL-UNNAMED --add-opens java.base/java.lang=ALL-UNNAMED  --add-opens java.base/java.net=ALL-UNNAMED)
   endif()
 
+  # The generator parses the headers each .i file %includes, so a change to one of those has
+  # to regenerate the binding. Listing only the .i file and the template meant that editing a
+  # legacy header left the previously generated wrapper in place: the C++ compiled, the build
+  # reported success, kodi.exe relinked, and the new function simply did not exist in Python.
+  # That is a silent failure costing a whole debugging round to find, so the headers are
+  # dependencies too.
+  #
+  # Globbed at configure time, which is the right trade here: editing a header is routine and
+  # is what this has to catch, while adding or removing one is rare and already means
+  # re-running CMake.
+  file(GLOB SWIG_HEADER_DEPS ${CMAKE_CURRENT_SOURCE_DIR}/../legacy/*.h)
+
   add_custom_command(OUTPUT ${CPP_FILE}
                      COMMAND ${SWIG_EXECUTABLE}
                      ARGS -w401 -c++ -o ${file}.xml -xml -I${CMAKE_SOURCE_DIR}/xbmc ${CMAKE_CURRENT_SOURCE_DIR}/../swig/${file}
                      COMMAND ${Java_JAVA_EXECUTABLE}
                      ARGS ${JAVA_OPEN_OPTS} -cp "${classpath}" groovy.ui.GroovyMain ${CMAKE_SOURCE_DIR}/tools/codegenerator/Generator.groovy ${file}.xml ${CMAKE_CURRENT_SOURCE_DIR}/../python/PythonSwig.cpp.template ${file}.cpp > ${devnull}
                      ${CLANG_FORMAT_COMMAND}
-                     DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/../swig/${file} ${CMAKE_CURRENT_SOURCE_DIR}/../python/PythonSwig.cpp.template)
+                     DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/../swig/${file} ${CMAKE_CURRENT_SOURCE_DIR}/../python/PythonSwig.cpp.template ${SWIG_HEADER_DEPS})
   set(SOURCES ${SOURCES} "${CPP_FILE}" PARENT_SCOPE)
 endfunction()
 
