@@ -55,4 +55,13 @@
   <addon optional="true">inputstream.adaptive</addon>
   <addon optional="true">peripheral.joystick</addon>
   <addon optional="true">service.xbmc.versioncheck</addon>
+  <!-- The screen reader. Listed here so it is enabled the first time it is found: an addon
+       shipped in the install folder is otherwise discovered and left disabled, so it never
+       starts - and someone who cannot see the screen has no way to reach the addon browser
+       to switch it on, which makes the whole build useless to the person it is for.
+       Optional deliberately. A non-optional entry that goes missing is LOGFATAL and Kodi
+       refuses to start (AddonManager.cpp:136-145), which would turn a damaged addon folder
+       into a machine that boots to nothing and cannot say why. Optional entries are still
+       enabled on discovery (AddonDatabase.cpp, SyncInstalled) - which is the whole point. -->
+  <addon optional="true">service.kodi.screenreader</addon>
 </addons>

@@ -189,6 +189,15 @@ Section "${APP_NAME}" SecAPP
   SetOutPath "$INSTDIR\userdata"
   File /r "${app_root}\application\userdata\*.*"
 
+  ;Everything from here to the matching "SetShellVarContext all" below is about the *user's*
+  ;profile, so the context has to be switched. This installer sets "SetShellVarContext all"
+  ;further up, which makes $APPDATA resolve to C:\ProgramData rather than the person's
+  ;roaming folder. Both of the steps below silently did the wrong thing because of it: the
+  ;keymap was written to C:\ProgramData\<app>\userdata\keymaps where nothing reads it, and
+  ;the profile copy looked for C:\ProgramData\Kodi, did not find it, and skipped. Neither
+  ;failed loudly -- the install simply came up empty and silent.
+  SetShellVarContext current
+
   ;Bring an existing Kodi profile across on a first install.
   ;
   ;This build is a rebranded Kodi, and APP_NAME also names the profile folder under $APPDATA.
@@ -245,6 +254,9 @@ Section "${APP_NAME}" SecAPP
     CreateDirectory "$APPDATA\${APP_NAME}\userdata\keymaps"
     SetOutPath "$APPDATA\${APP_NAME}\userdata\keymaps"
     File "${app_root}\application\userdata\keymaps\zzz.screenreader.xml"
+
+  ;Back to the all-users context the rest of this section expects.
+  SetShellVarContext all
 
   SetOutPath "$INSTDIR"
 
