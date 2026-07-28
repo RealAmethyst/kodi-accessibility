@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<!--
+  Kodi Screen Reader hotkeys. Install into userdata\keymaps\.
+
+  Same layout as the old reader, so muscle memory carries over:
+
+    F1   repeat what was just said
+    F2   read the window and how much is in it
+    F3   read detail for the focused item
+    F4   stop talking
+    F6   open reader settings
+    F12  turn the reader on or off
+
+  The filename starts with zzz on purpose. Kodi loads every .xml in the keymaps
+  folder in alphabetical order and later files win, so this has to sort after
+  service.xbmc.tts.keyboard.xml for these keys to reach this reader rather than
+  the old one. To hand the keys back to the old reader, delete this file.
+-->
+<keymap>
+  <global>
+    <keyboard>
+      <f1>NotifyAll(service.kodi.screenreader,REPEAT)</f1>
+      <f2>NotifyAll(service.kodi.screenreader,EXTRA)</f2>
+      <f3>NotifyAll(service.kodi.screenreader,ITEM_EXTRA)</f3>
+      <f4>NotifyAll(service.kodi.screenreader,STOP)</f4>
+      <f6>NotifyAll(service.kodi.screenreader,SETTINGS)</f6>
+      <f12>NotifyAll(service.kodi.screenreader,TOGGLE)</f12>
+    </keyboard>
+  </global>
+</keymap>

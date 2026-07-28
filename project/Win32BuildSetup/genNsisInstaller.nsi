@@ -234,10 +234,17 @@ Section "${APP_NAME}" SecAPP
   ;
   ;Never overwritten. If the file is already there it may have been edited, and silently
   ;replacing someone's edited keymap would be its own bug.
+  ;
+  ;Taken from the staged userdata rather than from the bundled addon, and that is not
+  ;arbitrary. File is a *compile-time* command: makensis has to find it while building the
+  ;installer. BuildSetup.bat stages and packages in one go, so the addon is not in the staged
+  ;tree yet at that moment -- referencing it there fails the whole package with "Error in
+  ;script ... on line N", which is a confusing way to learn about build ordering. The fork's
+  ;own userdata is staged before packaging, so this path always exists.
   IfFileExists "$APPDATA\${APP_NAME}\userdata\keymaps\zzz.screenreader.xml" +4 0
     CreateDirectory "$APPDATA\${APP_NAME}\userdata\keymaps"
     SetOutPath "$APPDATA\${APP_NAME}\userdata\keymaps"
-    File "${app_root}\application\addons\service.kodi.screenreader\resources\keymap\zzz.screenreader.xml"
+    File "${app_root}\application\userdata\keymaps\zzz.screenreader.xml"
 
   SetOutPath "$INSTDIR"
 
