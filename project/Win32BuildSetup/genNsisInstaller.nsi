@@ -189,6 +189,58 @@ Section "${APP_NAME}" SecAPP
   SetOutPath "$INSTDIR\userdata"
   File /r "${app_root}\application\userdata\*.*"
 
+  ;Bring an existing Kodi profile across on a first install.
+  ;
+  ;This build is a rebranded Kodi, and APP_NAME also names the profile folder under $APPDATA.
+  ;So without this, installing it "over" Kodi would start with nothing: no library, no
+  ;sources, no settings, no addons. That is a very unpleasant surprise for someone who set
+  ;all of it up by ear.
+  ;
+  ;Copied, never moved, so the original Kodi profile is left completely intact and remains a
+  ;working fallback if this build misbehaves.
+  ;
+  ;Three guards, and all three matter:
+  ;  - skipped when APP_NAME is "Kodi", where source and target are the same folder;
+  ;  - skipped when our profile already exists, so an upgrade never overwrites the settings
+  ;    someone has since changed;
+  ;  - skipped when there is no Kodi profile to copy, which is the ordinary case for someone
+  ;    who has never run Kodi before -- they get a clean first run, not an error.
+  ;
+  ;Only userdata and addons are copied. temp and thumbnail caches rebuild themselves, and a
+  ;profile can be large enough that copying the lot would look like the installer hanging.
+  StrCmp "${APP_NAME}" "Kodi" skip_profile_migration 0
+  IfFileExists "$APPDATA\${APP_NAME}\userdata\*.*" skip_profile_migration 0
+  IfFileExists "$APPDATA\Kodi\userdata\*.*" 0 skip_profile_migration
+    DetailPrint "Copying your existing Kodi settings..."
+    CreateDirectory "$APPDATA\${APP_NAME}\userdata"
+    CopyFiles "$APPDATA\Kodi\userdata\*.*" "$APPDATA\${APP_NAME}\userdata"
+    IfFileExists "$APPDATA\Kodi\addons\*.*" 0 +3
+      CreateDirectory "$APPDATA\${APP_NAME}\addons"
+      CopyFiles "$APPDATA\Kodi\addons\*.*" "$APPDATA\${APP_NAME}\addons"
+  skip_profile_migration:
+
+  ;Screen reader keymap.
+  ;
+  ;It has to go to the *profile* rather than $INSTDIR\userdata, because the copy in the
+  ;install folder is only ever read in portable mode. Without this file the reader's keys --
+  ;repeat, window, item detail, stop, settings, on/off -- do nothing at all, which looks like
+  ;the reader being broken rather than a missing keymap, and is very hard to work out without
+  ;being able to see the screen.
+  ;
+  ;Done here rather than by the addon because Kodi has no way to reload keymaps: one dropped
+  ;in later does nothing until the next restart. Placing it before Kodi has ever run is what
+  ;makes the keys work the first time. The addon installs it too, for anyone who installs the
+  ;addon by hand from a zip.
+  ;
+  ;Never overwritten. If the file is already there it may have been edited, and silently
+  ;replacing someone's edited keymap would be its own bug.
+  IfFileExists "$APPDATA\${APP_NAME}\userdata\keymaps\zzz.screenreader.xml" +4 0
+    CreateDirectory "$APPDATA\${APP_NAME}\userdata\keymaps"
+    SetOutPath "$APPDATA\${APP_NAME}\userdata\keymaps"
+    File "${app_root}\application\addons\service.kodi.screenreader\resources\keymap\zzz.screenreader.xml"
+
+  SetOutPath "$INSTDIR"
+
   ;Store installation folder
   WriteRegStr HKCU "Software\${APP_NAME}" "" $INSTDIR
 
