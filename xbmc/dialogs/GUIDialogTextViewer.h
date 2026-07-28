@@ -19,6 +19,17 @@ public:
   bool OnMessage(CGUIMessage& message) override;
   void SetText(const std::string& strText) { m_strText = strText; }
   void SetHeading(const std::string& strHeading) { m_strHeading = strHeading; }
+
+  /*! \brief The caller's heading, which names the document being shown.
+   *
+   * The window's own localized name is just "Text viewer", which tells someone relying on
+   * a screen reader nothing about what they have opened.
+   */
+  std::string GetAccessibilityHeading() const override
+  {
+    return m_strHeading.empty() ? CGUIDialog::GetAccessibilityHeading() : m_strHeading;
+  }
+
   void UseMonoFont(bool use);
 
   //! \brief Load a file into memory and show in dialog.

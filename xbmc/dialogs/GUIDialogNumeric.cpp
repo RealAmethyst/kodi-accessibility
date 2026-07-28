@@ -674,6 +674,25 @@ void CGUIDialogNumeric::SetHeading(const std::string& strHeading)
   OnMessage(msg);
 }
 
+std::string CGUIDialogNumeric::GetAccessibilityHeading() const
+{
+  // Read back out of the heading label, because SetHeading() keeps no copy of what it was
+  // given. Every caller sets it before Open(), so it is already in place by the time the
+  // window-init announcement asks for it.
+  // const_cast because GetControl() is not const, which is the same reason CGUIWindow's own
+  // const accessors do it. Nothing here modifies the control; GetDescription() is const.
+  const CGUIControl* const control =
+      const_cast<CGUIDialogNumeric*>(this)->GetControl(CONTROL_HEADING_LABEL);
+  if (control)
+  {
+    const std::string heading = control->GetDescription();
+    if (!heading.empty())
+      return heading;
+  }
+
+  return CGUIDialog::GetAccessibilityHeading();
+}
+
 void CGUIDialogNumeric::VerifyDate(bool checkYear)
 {
   if (m_datetime.day == 0)

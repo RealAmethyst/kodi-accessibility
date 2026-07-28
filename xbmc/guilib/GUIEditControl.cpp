@@ -8,6 +8,7 @@
 
 #include "GUIEditControl.h"
 
+#include "AccessibilityAnnouncer.h"
 #include "GUIFont.h"
 #include "GUIKeyboardFactory.h"
 #include "GUIUserMessages.h"
@@ -458,6 +459,77 @@ void CGUIEditControl::RecalcRightLabelPosition()
   }
   else
     m_textOffset = 0;
+}
+
+void CGUIEditControl::DoProcess(unsigned int currentTime, CDirtyRegionList& dirtyregions)
+{
+  CGUIButtonControl::DoProcess(currentTime, dirtyregions);
+
+  // Deliberately not gated on HasFocus(), which is what the spinner and slider hooks use.
+  // In Kodi's on-screen keyboard the edit field never has focus at all -- focus is on the
+  // letter buttons being pressed, and the field is only written to (GUIDialogKeyboardGeneric
+  // sends GUI_MSG_SET_TEXT to CTL_EDIT). Requiring focus meant the one place typing most
+  // needs describing reported nothing whatsoever. Text arriving in a text field is input by
+  // definition, so being on screen is the honest gate.
+  if (!IsVisible())
+  {
+    // Re-prime, so re-opening a dialog does not read back everything already in the field
+    // as though it had just been typed.
+    m_textAnnouncePrimed = false;
+    m_lastAnnouncedText.clear();
+    return;
+  }
+
+  if (m_textAnnouncePrimed && m_text2 == m_lastAnnouncedText)
+    return;
+
+  const std::wstring previous = m_lastAnnouncedText;
+  const bool first = !m_textAnnouncePrimed;
+  m_lastAnnouncedText = m_text2;
+  m_textAnnouncePrimed = true;
+
+  // Whatever was already in the field when focus arrived has just been described by the
+  // focus event; reading it back a character at a time would be nonsense.
+  if (first)
+    return;
+
+  // A password field reports that something happened and never what. The masking in this
+  // class exists precisely so the real characters do not escape, and an announcement is
+  // broadcast to every addon listening.
+  if (IsPasswordInput())
+  {
+    KODI::ACCESSIBILITY::CAccessibilityAnnouncer::OnTextEdit(this, "", false, false);
+    return;
+  }
+
+  // The common cases are typing at the end and deleting from the end, which are a prefix
+  // apart. Anything else -- editing mid-string, a paste, a field replaced wholesale -- is
+  // reported as the whole new text, because saying "what changed" would take a real diff
+  // and getting that subtly wrong is worse than saying too much.
+  std::wstring spoken;
+  bool deleted = false;
+  if (m_text2.size() > previous.size() && m_text2.compare(0, previous.size(), previous) == 0)
+  {
+    spoken = m_text2.substr(previous.size());
+  }
+  else if (m_text2.size() < previous.size() &&
+           previous.compare(0, m_text2.size(), m_text2) == 0)
+  {
+    spoken = previous.substr(m_text2.size());
+    deleted = true;
+  }
+  else
+  {
+    spoken = m_text2;
+  }
+
+  if (spoken.empty())
+    return;
+
+  std::string utf8;
+  g_charsetConverter.wToUTF8(spoken, utf8);
+  KODI::ACCESSIBILITY::CAccessibilityAnnouncer::OnTextEdit(this, utf8, deleted,
+                                                           deleted && m_text2.empty());
 }
 
 void CGUIEditControl::ProcessText(unsigned int currentTime)

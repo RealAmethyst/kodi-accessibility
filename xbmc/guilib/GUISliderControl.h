@@ -60,6 +60,17 @@ public:
   CGUISliderControl* Clone() const override { return new CGUISliderControl(*this); }
 
   void Process(unsigned int currentTime, CDirtyRegionList &dirtyregions) override;
+
+  /*!
+   * \brief Notices the value changing, for accessibility. See CGUISpinControl::DoProcess.
+   *
+   * Dragging or stepping a slider moves no focus and shifts no list selection, so nothing
+   * else in the patch reports it. In DoProcess() rather than Process() so that
+   * CGUISettingsSliderControl is covered whether or not it calls the base -- it does today,
+   * but CGUIPanelContainer did not, and that silently cost every poster view once already.
+   */
+  void DoProcess(unsigned int currentTime, CDirtyRegionList& dirtyregions) override;
+
   void Render() override;
   bool OnAction(const CAction &action) override;
   virtual bool IsActive() const { return true; }
@@ -130,6 +141,22 @@ protected:
   int m_iStart;
   int m_iInterval;
   int m_iEnd;
+
+  /*!
+   * \brief What the accessibility layer last reported, so only real changes are announced.
+   *
+   * All three are compared because which one holds the value depends on m_iType, and both
+   * elements of each because a range slider has a lower and an upper selector. Six
+   * comparisons on values already in hand, once per frame, for the focused slider only.
+   *
+   * m_valueAnnouncePrimed is false until focus arrives, so the value the slider already had
+   * is adopted silently -- the focus event has just described it, and announcing it again
+   * would say everything twice on the way in.
+   */
+  bool m_valueAnnouncePrimed{false};
+  std::array<float, 2> m_lastAnnouncedPercent{};
+  std::array<int, 2> m_lastAnnouncedInt{};
+  std::array<float, 2> m_lastAnnouncedFloat{};
 
   std::array<float, 2> m_floatValues;
   float m_fStart;

@@ -8,6 +8,7 @@
 
 #include "GUISpinControl.h"
 
+#include "AccessibilityAnnouncer.h"
 #include "GUIMessage.h"
 #include "input/actions/Action.h"
 #include "input/actions/ActionIDs.h"
@@ -414,6 +415,38 @@ void CGUISpinControl::SetInvalid()
   m_imgspinDownFocus->SetInvalid();
   m_imgspinUpDisabled->SetInvalid();
   m_imgspinDownDisabled->SetInvalid();
+}
+
+void CGUISpinControl::DoProcess(unsigned int currentTime, CDirtyRegionList& dirtyregions)
+{
+  CGUIControl::DoProcess(currentTime, dirtyregions);
+
+  // Only the focused spinner, so background ones stay quiet, and only on a real change:
+  // this runs every frame and the announcement queue is unbounded, so announcing
+  // unconditionally would flood it. In the common case it is two comparisons on values
+  // already in hand.
+  if (!HasFocus())
+  {
+    // Re-prime while unfocused, so coming back to this spinner is described by the focus
+    // event and not by both. The container hook primes itself the same way, in SetFocus.
+    m_lastAnnouncedValue = std::numeric_limits<int>::min();
+    return;
+  }
+
+  if (m_iValue == m_lastAnnouncedValue && m_fValue == m_lastAnnouncedFloat)
+    return;
+
+  const bool first = m_lastAnnouncedValue == std::numeric_limits<int>::min();
+  m_lastAnnouncedValue = m_iValue;
+  m_lastAnnouncedFloat = m_fValue;
+
+  // The first time through carries whatever the spinner already held when focus arrived,
+  // which the focus event has just described. Announcing that again would say the value
+  // twice on the way in -- the same doubling the container hook has to avoid.
+  if (first)
+    return;
+
+  KODI::ACCESSIBILITY::CAccessibilityAnnouncer::OnControlValue(this);
 }
 
 void CGUISpinControl::Process(unsigned int currentTime, CDirtyRegionList &dirtyregions)

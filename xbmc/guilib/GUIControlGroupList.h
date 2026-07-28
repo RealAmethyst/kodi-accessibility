@@ -61,6 +61,21 @@ public:
   // shut up warning about hiding an overloaded virtual function
   using CGUIControlGroup::GetFirstFocusableControl;
 
+  /*!
+   * \brief How many of the children can be focused, and which one is.
+   *
+   * Made public for accessibility. Every settings page in Kodi is a group list of ordinary
+   * buttons, spinners and radio buttons rather than a container, so nothing about an
+   * individual setting reports a position -- a screen reader could only say "Skip steps"
+   * with no idea it is the fourth of fourteen. The group list already computes both for its
+   * own scrolling; these were protected only because nothing outside had asked yet.
+   *
+   * GetSelectedItem() returns a 1-based position among the visible, focusable children, or
+   * -1 when none of them has focus.
+   */
+  int GetNumItems() const;
+  int GetSelectedItem() const;
+
 protected:
   EVENT_RESULT OnMouseEvent(const CPoint& point, const KODI::MOUSE::CMouseEvent& event) override;
   bool IsControlOnScreen(float pos, const CGUIControl* control) const;
@@ -70,8 +85,6 @@ protected:
   void ScrollTo(float offset);
   float GetAlignOffset() const;
 
-  int GetNumItems() const;
-  int GetSelectedItem() const;
   /*!
    * \brief Returns the position of the specified child control
    * \param control The control to be located.

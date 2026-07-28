@@ -8,6 +8,7 @@
 
 #pragma once
 
+#include "AddonString.h"
 #include "guilib/GUIEditControl.h"
 #include "swighelper.h"
 
@@ -105,6 +106,38 @@ namespace XBMCAddon
     getScreenWidth();
 #else
     long getScreenWidth();
+#endif
+
+#ifdef DOXYGEN_SHOULD_USE_THIS
+    ///
+    /// \ingroup python_xbmcgui
+    /// @brief \python_func{ xbmcgui.getAccessibilitySnapshot() }
+    /// Returns the current accessibility state as a JSON string.
+    ///
+    /// Kodi's first window and focus announcements happen before a service addon's
+    /// Python exists, and they are not replayed, so a screen reader starting up has no
+    /// way to learn where it is except by polling. This answers that in one call.
+    ///
+    /// The object carries `seq`, `window`, `dialog`, `heading`, `text`, `capabilities`
+    /// and `hasFocus`, plus a `focus` object when something is focused. Compare `seq`
+    /// against the `seq` on accessibility announcements to discard any that describe
+    /// state this snapshot already supersedes.
+    ///
+    /// @return                        The accessibility state as JSON, or an empty string
+    ///
+    ///
+    ///--------------------------------------------------------------------------
+    ///
+    /// **Example:**
+    /// ~~~~~~~~~~~~~{.py}
+    /// ..
+    /// state = json.loads(xbmcgui.getAccessibilitySnapshot())
+    /// ..
+    /// ~~~~~~~~~~~~~
+    ///
+    getAccessibilitySnapshot();
+#else
+    String getAccessibilitySnapshot();
 #endif
     ///@}
 

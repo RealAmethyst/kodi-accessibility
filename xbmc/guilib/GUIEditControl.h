@@ -53,6 +53,22 @@ public:
   bool OnAction(const CAction &action) override;
   void OnClick() override;
 
+  /*!
+   * \brief Reports typing, for accessibility.
+   *
+   * Someone who cannot see the screen has no other confirmation that a key did what they
+   * meant, so what changes has to be spoken as it changes. The previous reader did this by
+   * polling an info label for a hardcoded control id per window and diffing the result --
+   * this reports it instead, and works in any dialog without knowing the skin.
+   *
+   * In DoProcess() rather than OnAction() or UpdateText() deliberately: it then catches
+   * every cause -- keypresses, the on-screen keyboard, paste, clearing, and anything
+   * setting the text programmatically -- by comparing what the control holds.
+   *
+   * Never reports the contents of a password field. See GetDisplayedText().
+   */
+  void DoProcess(unsigned int currentTime, CDirtyRegionList& dirtyregions) override;
+
   void SetLabel(const std::string &text) override;
   void SetLabel2(const std::string &text) override;
   void SetHint(const KODI::GUILIB::GUIINFO::CGUIInfoLabel& hint);
@@ -136,6 +152,16 @@ protected:
   bool IsComposingKey() const;
 
   std::wstring m_text2;
+
+  /*!
+   * \brief What the accessibility layer last reported, so only the change is announced.
+   *
+   * Holds the real text, like m_text2, and is never sent anywhere: it exists only to be
+   * compared against, and what gets announced for a password field is nothing at all.
+   */
+  std::wstring m_lastAnnouncedText;
+  bool m_textAnnouncePrimed{false};
+
   std::string  m_text;
   KODI::GUILIB::GUIINFO::CGUIInfoLabel m_hintInfo;
   float m_textOffset;

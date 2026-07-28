@@ -11,7 +11,9 @@
 #include "GUIBaseContainer.h"
 #include "GUIButtonControl.h"
 #include "GUIComponent.h"
+#include "GUIControlGroupList.h"
 #include "GUIEditControl.h"
+#include "GUISpinControlEx.h"
 #include "GUIListItem.h"
 #include "GUIRadioButtonControl.h"
 #include "GUISettingsSliderControl.h"
@@ -22,7 +24,12 @@
 #include "WindowIDs.h"
 #include "ServiceBroker.h"
 #include "interfaces/AnnouncementManager.h"
+#include "utils/JSONVariantWriter.h"
 #include "utils/Variant.h"
+#include "windowing/GraphicContext.h"
+#include "windowing/WinSystem.h"
+
+#include <mutex>
 
 namespace KODI
 {
@@ -30,6 +37,9 @@ namespace ACCESSIBILITY
 {
 
 std::atomic<bool> CAccessibilityAnnouncer::m_subtitlesEnabled{true};
+std::atomic<uint64_t> CAccessibilityAnnouncer::m_sequence{0};
+CAccessibilityAnnouncer::SnapshotState CAccessibilityAnnouncer::m_state;
+CCriticalSection CAccessibilityAnnouncer::m_stateSection;
 
 namespace
 {
@@ -127,6 +137,33 @@ std::string PlainText(std::string text)
   return text;
 }
 
+/*!
+ * \brief One node as a CVariant object.
+ *
+ * Shared by the event path and the snapshot deliberately. If the snapshot built its focus
+ * node its own way, the two could describe the same control differently, and a client would
+ * hear one thing at startup and another the moment anything moved.
+ */
+CVariant NodeToVariant(const CAccessibilityNode& node)
+{
+  CVariant data(CVariant::VariantTypeObject);
+  data["window"] = node.window;
+  data["dialog"] = node.dialog;
+  data["modal"] = node.modal;
+  data["control"] = node.control;
+  data["role"] = node.role;
+  // Everything a client might speak is filtered here, in the one place every
+  // node passes through, rather than at each site that fills one in.
+  data["name"] = PlainText(node.name);
+  data["value"] = PlainText(node.value);
+  data["state"] = node.state;
+  data["secondary"] = PlainText(node.secondary);
+  data["index"] = node.index;
+  data["total"] = node.total;
+  data["isFolder"] = node.isFolder;
+  return data;
+}
+
 } // unnamed namespace
 
 bool CAccessibilityAnnouncer::BuildNode(const CGUIControl* control, CAccessibilityNode& node)
@@ -137,6 +174,25 @@ bool CAccessibilityAnnouncer::BuildNode(const CGUIControl* control, CAccessibili
   node.control = control->GetID();
   node.window = control->GetParentID();
   node.role = RoleForControl(control->GetControlType());
+
+  // Position within a group list, which is how Kodi lays out every settings page: the
+  // individual settings are ordinary buttons, spinners and radio buttons parented to a
+  // CGUIControlGroupList rather than items in a container, so nothing about them reports a
+  // position and a client can only say "Skip steps" with no idea it is the fourth of
+  // fourteen. The group list already tracks both numbers for its own scrolling, so this
+  // costs a parent lookup and no traversal beyond what it does anyway.
+  //
+  // Set before the type ladder below, so a container that happens to sit inside a group
+  // list still overrides this with its own selection -- which is the more specific answer.
+  if (const auto* group = dynamic_cast<const CGUIControlGroupList*>(control->GetParentControl()))
+  {
+    const int position = group->GetSelectedItem(); // 1-based, or -1
+    if (position > 0)
+    {
+      node.index = position;
+      node.total = group->GetNumItems();
+    }
+  }
 
   // `dialog` is deliberately left alone here. Asking the window manager meant
   // taking the graphics context lock on every single focus and selection —
@@ -163,6 +219,13 @@ bool CAccessibilityAnnouncer::BuildNode(const CGUIControl* control, CAccessibili
         node.name = item->GetLabel();
         node.secondary = item->GetLabel2();
         node.isFolder = item->m_bIsFolder;
+
+        // Which entry is the one currently in force. A select dialog -- what a settings
+        // "dropdown" actually opens -- marks its current value this way, and without it a
+        // client reads out all fourteen choices with no way to tell which one is already
+        // chosen, or to confirm that picking one worked.
+        if (item->IsSelected())
+          node.state = "selected";
       }
     }
     return true;
@@ -194,6 +257,18 @@ bool CAccessibilityAnnouncer::BuildNode(const CGUIControl* control, CAccessibili
   if (const auto* slider = dynamic_cast<const CGUISliderControl*>(control))
   {
     node.value = slider->GetDescription();
+    return true;
+  }
+
+  // A settings spinner, which is what every "choose one of these" setting is until you open
+  // it. Its GetDescription() is literally "{label} ({value})"
+  // (GUISpinControlEx.cpp:111-114), so the two are pulled apart here for the same reason the
+  // settings slider is: a client can then say "Skip delay, 750 milliseconds" with a real
+  // pause, instead of reading a bracket aloud.
+  if (const auto* spin = dynamic_cast<const CGUISpinControlEx*>(control))
+  {
+    node.name = spin->GetTextLabel();
+    node.value = spin->GetCurrentLabel();
     return true;
   }
 
@@ -232,8 +307,64 @@ bool CAccessibilityAnnouncer::BuildNode(const CGUIControl* control, CAccessibili
   return true;
 }
 
-void CAccessibilityAnnouncer::Send(const char* message, const CAccessibilityNode& node)
+void CAccessibilityAnnouncer::RecordState(StateKind kind,
+                                          const CAccessibilityNode& node,
+                                          uint64_t seq)
 {
+  if (kind == StateKind::None)
+    return;
+
+  std::unique_lock<CCriticalSection> lock(m_stateSection);
+
+  // The sequence moves with the content, under this one lock, so the number a snapshot
+  // carries is always exactly the newest announcement folded into it. That is what lets a
+  // client discard an older event without having to reason about interleaving at all.
+  m_state.seq = seq;
+
+  if (kind == StateKind::Window)
+  {
+    // Only an opening replaces where we are. A close tells us a window went away but not
+    // what is underneath it, and Kodi does not re-focus the control below a dialog that
+    // closes -- it was never unfocused, so no focus event follows. Overwriting the record
+    // with nothing would leave a client that started at that moment knowing less than
+    // before, so the last place we actually knew about is kept.
+    if (node.state != "opened")
+      return;
+
+    m_state.window = node.window;
+    m_state.dialog = node.dialog;
+    m_state.modal = node.modal;
+    m_state.heading = node.name;
+    m_state.text = node.secondary;
+
+    // A window that has only just opened has not focused anything yet: OnInitWindow runs
+    // after this announcement. Saying so honestly is what lets a client tell "nothing is
+    // focused here" apart from "we have not been told yet", and both of those are real.
+    m_state.hasFocus = false;
+    m_state.focus = CAccessibilityNode();
+    return;
+  }
+
+  m_state.focus = node;
+  m_state.hasFocus = true;
+
+  // Focus and selection nodes carry the control's parent window, which is the authority on
+  // where the user is -- and it is the full window id, not one masked to its base, so a
+  // second instance of a dialog is not reported as the first.
+  if (node.window > 0)
+    m_state.window = node.window;
+}
+
+void CAccessibilityAnnouncer::Send(const char* message,
+                                   const CAccessibilityNode& node,
+                                   StateKind kind)
+{
+  // Numbered and remembered before the announcer is consulted, so that the state a client
+  // can ask for is recorded even during the early startup when there is no announcer yet --
+  // which is exactly the window this whole mechanism exists to cover.
+  const uint64_t seq = ++m_sequence;
+  RecordState(kind, node, seq);
+
   const std::shared_ptr<ANNOUNCEMENT::CAnnouncementManager> announcer =
       CServiceBroker::GetAnnouncementManager();
 
@@ -242,20 +373,11 @@ void CAccessibilityAnnouncer::Send(const char* message, const CAccessibilityNode
   if (!announcer)
     return;
 
-  CVariant data(CVariant::VariantTypeObject);
-  data["window"] = node.window;
-  data["dialog"] = node.dialog;
-  data["control"] = node.control;
-  data["role"] = node.role;
-  // Everything a client might speak is filtered here, in the one place every
-  // node passes through, rather than at each site that fills one in.
-  data["name"] = PlainText(node.name);
-  data["value"] = PlainText(node.value);
-  data["state"] = node.state;
-  data["secondary"] = PlainText(node.secondary);
-  data["index"] = node.index;
-  data["total"] = node.total;
-  data["isFolder"] = node.isFolder;
+  CVariant data = NodeToVariant(node);
+
+  // Pre-incremented, so the first announcement is 1 and 0 means "nothing announced yet",
+  // which is what a snapshot taken before anything happened reports.
+  data["seq"] = seq;
 
   // The three-argument overload fills in the standard sender, so this looks like every
   // other Kodi announcement and reaches Python as "GUI.<message>".
@@ -266,19 +388,57 @@ void CAccessibilityAnnouncer::OnControlFocus(const CGUIControl* control)
 {
   CAccessibilityNode node;
   if (BuildNode(control, node))
-    Send("OnAccessibilityFocus", node);
+    Send("OnAccessibilityFocus", node, StateKind::Focus);
 }
 
 void CAccessibilityAnnouncer::OnContainerSelection(const CGUIControl* container)
 {
   CAccessibilityNode node;
   if (BuildNode(container, node))
-    Send("OnAccessibilitySelection", node);
+    Send("OnAccessibilitySelection", node, StateKind::Focus);
+}
+
+void CAccessibilityAnnouncer::OnControlValue(const CGUIControl* control)
+{
+  CAccessibilityNode node;
+  if (BuildNode(control, node))
+    Send("OnAccessibilityValue", node, StateKind::Focus);
+}
+
+void CAccessibilityAnnouncer::OnTextEdit(const CGUIControl* control,
+                                         const std::string& text,
+                                         bool deleted,
+                                         bool emptied)
+{
+  CAccessibilityNode node;
+  if (!BuildNode(control, node))
+    return;
+
+  // BuildNode fills in the field's whole contents, which is right when focus arrives and
+  // wrong here: what wants saying is the character just typed, not everything typed so far.
+  node.value = text;
+
+  // "protected" is set by BuildNode for a password field and must survive, because it is
+  // what tells a client there is deliberately nothing to say. Otherwise the removal is
+  // marked so the client can put it in its own language rather than ours -- and "cleared"
+  // is kept distinct from "deleted" because a field that is now empty is worth saying so,
+  // and only this side knows what was left behind.
+  if (node.state.empty())
+  {
+    if (emptied)
+      node.state = "cleared";
+    else if (deleted)
+      node.state = "deleted";
+  }
+
+  Send("OnAccessibilityValue", node, StateKind::Focus);
 }
 
 void CAccessibilityAnnouncer::OnWindow(int windowID,
                                        bool dialog,
+                                       bool modal,
                                        bool opening,
+                                       const std::string& heading,
                                        const std::string& text)
 {
   // The toast dialog reports itself separately, with its actual text. Letting it also open
@@ -290,10 +450,20 @@ void CAccessibilityAnnouncer::OnWindow(int windowID,
   CAccessibilityNode node;
   node.window = windowID;
   node.dialog = dialog;
+  node.modal = modal;
   node.role = "window";
+  node.name = heading;
   node.state = opening ? "opened" : "closed";
   node.secondary = text;
-  Send("OnAccessibilityWindow", node);
+
+  // A dialog that is not modal is not where the user is. The event still goes out, because
+  // a client may want to know something appeared, but it must not become the remembered
+  // location -- which is exactly what went wrong in the first real run: the mouse pointer
+  // dialog (WINDOW_DIALOG_POINTER) opened during startup, and the reader spent the next few
+  // seconds believing it was in a dialog with nothing in it. Kodi draws the same line, in
+  // GetActiveWindowOrDialog(), which promotes modal dialogs and nothing else.
+  const StateKind kind = (dialog && !modal) ? StateKind::None : StateKind::Window;
+  Send("OnAccessibilityWindow", node, kind);
 }
 
 void CAccessibilityAnnouncer::OnNotification(const std::string& caption,
@@ -303,7 +473,7 @@ void CAccessibilityAnnouncer::OnNotification(const std::string& caption,
   node.role = "notification";
   node.name = caption;
   node.secondary = description;
-  Send("OnAccessibilityNotification", node);
+  Send("OnAccessibilityNotification", node, StateKind::None);
 }
 
 void CAccessibilityAnnouncer::OnSubtitle(const std::string& text)
@@ -311,7 +481,73 @@ void CAccessibilityAnnouncer::OnSubtitle(const std::string& text)
   CAccessibilityNode node;
   node.role = "subtitle";
   node.name = text;
-  Send("OnAccessibilitySubtitle", node);
+  Send("OnAccessibilitySubtitle", node, StateKind::None);
+}
+
+std::string CAccessibilityAnnouncer::GetSnapshotJSON()
+{
+  CVariant data(CVariant::VariantTypeObject);
+
+  // What this build can emit, so a client learns it from a capability list rather than by
+  // inferring it from a version number. It matters because the events a fork emits decide
+  // what a client still has to poll for: there is no focus or selection event when only a
+  // slider's value changes, so a reader has to keep watching that itself until this list
+  // says otherwise.
+  CVariant capabilities(CVariant::VariantTypeArray);
+  capabilities.push_back("focus");
+  capabilities.push_back("selection");
+  capabilities.push_back("value");
+  capabilities.push_back("window");
+  capabilities.push_back("windowHeading");
+  capabilities.push_back("notification");
+  capabilities.push_back("subtitle");
+  capabilities.push_back("snapshot");
+  data["capabilities"] = std::move(capabilities);
+
+  // A copy of what Kodi's own thread last recorded, and nothing else. No window manager, no
+  // control tree, no graphics context lock -- see the header for why reading those from a
+  // caller's thread is a lifetime race rather than merely a slow one. This lock is held for
+  // a struct copy.
+  SnapshotState state;
+  {
+    std::unique_lock<CCriticalSection> lock(m_stateSection);
+    state = m_state;
+  }
+
+  data["seq"] = state.seq;
+
+  // Stays -1 until a real window has actually been announced, and deliberately never
+  // WINDOW_INVALID: that constant is 9999, a positive number a client checking "is this a
+  // real window id" would happily accept. Accepting it would mean a screen reader deciding
+  // it knows where it is when it does not, and stopping the polling that was covering for
+  // it.
+  data["window"] = state.window;
+  data["dialog"] = state.dialog;
+  data["modal"] = state.modal;
+  data["heading"] = PlainText(state.heading);
+  data["text"] = PlainText(state.text);
+
+  // A real boolean rather than an absent key. A window genuinely reporting nothing focused
+  // has to be distinguishable from Kodi not having told us anything yet, or a client can
+  // never tell whether it is safe to stop polling -- and both guesses are bad. Stopping too
+  // early means silence; never stopping means the polling this call exists to remove.
+  data["hasFocus"] = state.hasFocus;
+  if (state.hasFocus)
+  {
+    CVariant focus = NodeToVariant(state.focus);
+    // The focus node's own dialog flag is left unset by BuildNode, because asking the
+    // window manager on every focus would take the graphics context lock once per keypress.
+    // Here the window record already knows, so the snapshot can carry what the events
+    // cannot afford to.
+    focus["dialog"] = state.dialog;
+    data["focus"] = std::move(focus);
+  }
+
+  std::string json;
+  if (!CJSONVariantWriter::Write(data, json, true))
+    return {};
+
+  return json;
 }
 
 } // namespace ACCESSIBILITY

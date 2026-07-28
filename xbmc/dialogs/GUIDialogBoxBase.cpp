@@ -151,6 +151,22 @@ std::string CGUIDialogBoxBase::GetAccessibilityText() const
   return m_text;
 }
 
+std::string CGUIDialogBoxBase::GetAccessibilityHeading() const
+{
+  // A message box knows its real heading -- the caller set it -- so use that
+  // rather than the generic name of the dialog class, which would say "Yes/No
+  // dialog" where the user needs to hear what the question is about.
+  {
+    std::unique_lock<CCriticalSection> lock(m_section);
+    if (!m_strHeading.empty())
+      return m_strHeading;
+  }
+
+  // Lock released first: the base implementation reads Kodi's localized strings
+  // under their own mutex, and there is no reason to hold ours across it.
+  return CGUIDialog::GetAccessibilityHeading();
+}
+
 void CGUIDialogBoxBase::OnInitWindow()
 {
   // set focus to default

@@ -17,6 +17,7 @@
 #include "GUILabel.h"
 #include "GUITexture.h"
 
+#include <limits>
 #include <vector>
 
 #define SPIN_CONTROL_TYPE_INT    1
@@ -36,6 +37,22 @@ public:
   CGUISpinControl* Clone() const override { return new CGUISpinControl(*this); }
 
   void Process(unsigned int currentTime, CDirtyRegionList &dirtyregions) override;
+
+  /*!
+   * \brief Notices the value changing, for accessibility.
+   *
+   * Turning a spinner moves no focus and changes no list selection, so nothing else in the
+   * patch emits anything for it -- a screen reader could only find out by polling, which is
+   * what this replaces.
+   *
+   * In DoProcess() rather than Process() on purpose. CGUISpinControlEx does call the base
+   * Process(), but CGUIPanelContainer does not, and that cost a silent failure across every
+   * poster view once already; nothing overrides DoProcess(), so hooking here cannot be
+   * broken by a subclass on a future rebase. By this point CGUIControl::DoProcess has
+   * already run Process(), so the value is settled.
+   */
+  void DoProcess(unsigned int currentTime, CDirtyRegionList& dirtyregions) override;
+
   void Render() override;
   bool OnAction(const CAction &action) override;
   void OnLeft() override;
@@ -109,6 +126,21 @@ protected:
   float m_fValue;
   int m_iType;
   int m_iSelect;
+
+  /*!
+   * \brief What the accessibility layer last reported, so only real changes are announced.
+   *
+   * Both are compared, because which one carries the value depends on m_iType: a text
+   * spinner steps m_iValue as an index into its labels, an integer one uses it as the value
+   * itself, and a float one uses m_fValue. Deliberately the raw fields rather than
+   * GetValue(), which maps a text spinner's index through m_vecValues and so can report the
+   * same number for two different labels.
+   *
+   * Initialised to something no real value can be, so the first announcement after gaining
+   * focus is never suppressed.
+   */
+  int m_lastAnnouncedValue{std::numeric_limits<int>::min()};
+  float m_lastAnnouncedFloat{std::numeric_limits<float>::lowest()};
   bool m_bReverse;
   float m_fInterval;
   std::vector<std::string> m_vecLabels;

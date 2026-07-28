@@ -8,6 +8,7 @@
 
 #include "GUISliderControl.h"
 
+#include "AccessibilityAnnouncer.h"
 #include "GUIComponent.h"
 #include "GUIInfoManager.h"
 #include "GUIWindowManager.h"
@@ -103,6 +104,36 @@ CGUISliderControl::CGUISliderControl(const CGUISliderControl& control)
     m_dragging(control.m_dragging),
     m_orientation(control.m_orientation)
 {
+}
+
+void CGUISliderControl::DoProcess(unsigned int currentTime, CDirtyRegionList& dirtyregions)
+{
+  CGUIControl::DoProcess(currentTime, dirtyregions);
+
+  if (!HasFocus())
+  {
+    // Re-prime while unfocused, so returning to this slider is described by the focus event
+    // and not by both it and this.
+    m_valueAnnouncePrimed = false;
+    return;
+  }
+
+  if (m_valueAnnouncePrimed && m_percentValues == m_lastAnnouncedPercent &&
+      m_intValues == m_lastAnnouncedInt && m_floatValues == m_lastAnnouncedFloat)
+    return;
+
+  const bool first = !m_valueAnnouncePrimed;
+  m_valueAnnouncePrimed = true;
+  m_lastAnnouncedPercent = m_percentValues;
+  m_lastAnnouncedInt = m_intValues;
+  m_lastAnnouncedFloat = m_floatValues;
+
+  // The value the slider already held when focus arrived has just been described by the
+  // focus event; announcing it again would say it twice on the way in.
+  if (first)
+    return;
+
+  KODI::ACCESSIBILITY::CAccessibilityAnnouncer::OnControlValue(this);
 }
 
 void CGUISliderControl::Process(unsigned int currentTime, CDirtyRegionList &dirtyregions)

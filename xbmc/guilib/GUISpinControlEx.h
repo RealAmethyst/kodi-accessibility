@@ -44,6 +44,16 @@ public:
   float GetXPosition() const override { return m_buttonControl.GetXPosition(); }
   float GetYPosition() const override { return m_buttonControl.GetYPosition(); }
   std::string GetDescription() const override;
+
+  /*! \brief The spinner's own label, without the value GetDescription() appends to it.
+   *
+   * GetDescription() formats the two together as "{label} ({value})", which is right for
+   * display and wrong to speak: a client wanting to say the name and the value as two
+   * things, with a pause between, would have to parse the brackets back off. Mirrors
+   * CGUISettingsSliderControl::GetTextLabel(), which exists for the same reason.
+   */
+  std::string GetTextLabel() const { return m_buttonControl.GetDescription(); }
+
   bool HitTest(const CPoint& point) const override { return m_buttonControl.HitTest(point); }
   void SetSpinPosition(float spinPosX);
 

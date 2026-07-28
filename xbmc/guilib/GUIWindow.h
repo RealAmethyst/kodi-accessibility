@@ -132,6 +132,19 @@ public:
    */
   virtual std::string GetAccessibilityText() const { return {}; }
 
+  /*! \brief What this window is called, for a client to announce on entering it.
+   *
+   * The base answer is Kodi's own name for the window -- the localized string
+   * whose id is the window id, which is exactly what the System.CurrentWindow
+   * info label resolves to. Windows that know a better name of their own
+   * override this; a message box returns the heading it was given rather than
+   * the generic name of the dialog class.
+   *
+   * Empty when Kodi has no name for the window, which is honest: a client that
+   * gets nothing says nothing, instead of announcing a number.
+   */
+  virtual std::string GetAccessibilityHeading() const;
+
   virtual bool IsDialogRunning() const { return false; }
   virtual bool IsModalDialog() const { return false; }
   virtual bool IsMediaWindow() const { return false; }

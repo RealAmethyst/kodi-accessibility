@@ -16,6 +16,7 @@
 #include "GUIControlProfiler.h"
 #include "GUIInfoManager.h"
 #include "GUIWindowManager.h"
+#include "LocalizeStrings.h"
 #include "ServiceBroker.h"
 #include "addons/Skin.h"
 #include "input/WindowTranslator.h"
@@ -596,7 +597,9 @@ bool CGUIWindow::OnMessage(CGUIMessage& message)
       // Announced before OnInitWindow(), which is what focuses the default control, so a
       // client hears the heading first and the focused item second. ActivateWindow_Internal
       // emits nothing of its own, so this message is the reliable point for both directions.
-      KODI::ACCESSIBILITY::CAccessibilityAnnouncer::OnWindow(GetID(), IsDialog(), true,
+      KODI::ACCESSIBILITY::CAccessibilityAnnouncer::OnWindow(GetID(), IsDialog(),
+                                                             IsModalDialog(), true,
+                                                             GetAccessibilityHeading(),
                                                              GetAccessibilityText());
       OnInitWindow();
       return true;
@@ -606,7 +609,9 @@ bool CGUIWindow::OnMessage(CGUIMessage& message)
   case GUI_MSG_WINDOW_DEINIT:
     {
       CLog::Log(LOGDEBUG, "------ Window Deinit ({}) ------", GetProperty("xmlfile").asString());
-      KODI::ACCESSIBILITY::CAccessibilityAnnouncer::OnWindow(GetID(), IsDialog(), false);
+      KODI::ACCESSIBILITY::CAccessibilityAnnouncer::OnWindow(GetID(), IsDialog(),
+                                                             IsModalDialog(), false,
+                                                             GetAccessibilityHeading());
       OnDeinitWindow(message.GetParam1());
       // now free the window
       if (m_dynamicResourceAlloc) FreeResources();
@@ -856,6 +861,25 @@ void CGUIWindow::SetInitialVisibility()
 bool CGUIWindow::IsActive() const
 {
   return CServiceBroker::GetGUI()->GetWindowManager().IsWindowActive(GetID());
+}
+
+std::string CGUIWindow::GetAccessibilityHeading() const
+{
+  // Kodi's own name for this window: the localized string whose id is the window
+  // id. This is exactly what the System.CurrentWindow info label resolves to
+  // (GUIControlsGUIInfo.cpp, SYSTEM_CURRENT_WINDOW), so a client hears the same
+  // name Kodi uses everywhere else rather than something invented here.
+  //
+  // Deliberately not the skin's header control. There is no reliable id for one:
+  // Kodi's own dialogs variously use 1, 2, 10, 411 and 29/30, and in Estuary a
+  // label with id 1 exists in only two window files. Guessing an id would be
+  // wrong more often than right, and wrong here means announcing the wrong thing
+  // on every screen.
+  //
+  // Returns empty when there is no string for this id, which is the honest
+  // answer -- CLocalizeStrings::Get gives back an empty string for an unknown
+  // code rather than anything that could be spoken by mistake.
+  return g_localizeStrings.Get(GetID());
 }
 
 bool CGUIWindow::CheckAnimation(ANIMATION_TYPE animType)

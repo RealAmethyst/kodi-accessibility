@@ -41,6 +41,16 @@ public:
   static InputVerificationResult ShowAndVerifyInput(std::string& strPassword, const std::string& strHeading, bool bGetUserInput);
 
   void SetHeading(const std::string &strHeading);
+
+  /*! \brief The caller's prompt, which says what number is being asked for.
+   *
+   * This dialog does not keep the heading it is given -- SetHeading() pushes it straight
+   * into the heading label -- so it is read back from there. The window's own localized
+   * name is only "Numeric input", which leaves someone relying on a screen reader being
+   * asked for a number with no idea what the number is for.
+   */
+  std::string GetAccessibilityHeading() const override;
+
   void SetMode(INPUT_MODE mode, const KODI::TIME::SystemTime& initial);
   void SetMode(INPUT_MODE mode, const std::string &initial);
   KODI::TIME::SystemTime GetOutput() const;
