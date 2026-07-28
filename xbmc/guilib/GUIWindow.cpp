@@ -8,6 +8,7 @@
 
 #include "GUIWindow.h"
 
+#include "AccessibilityAnnouncer.h"
 #include "GUIAudioManager.h"
 #include "GUIComponent.h"
 #include "GUIControlFactory.h"
@@ -592,6 +593,11 @@ bool CGUIWindow::OnMessage(CGUIMessage& message)
     {
       CLog::Log(LOGDEBUG, "------ Window Init ({}) ------", GetProperty("xmlfile").asString());
       if (m_dynamicResourceAlloc || !m_bAllocated) AllocResources(false);
+      // Announced before OnInitWindow(), which is what focuses the default control, so a
+      // client hears the heading first and the focused item second. ActivateWindow_Internal
+      // emits nothing of its own, so this message is the reliable point for both directions.
+      KODI::ACCESSIBILITY::CAccessibilityAnnouncer::OnWindow(GetID(), IsDialog(), true,
+                                                             GetAccessibilityText());
       OnInitWindow();
       return true;
     }
@@ -600,6 +606,7 @@ bool CGUIWindow::OnMessage(CGUIMessage& message)
   case GUI_MSG_WINDOW_DEINIT:
     {
       CLog::Log(LOGDEBUG, "------ Window Deinit ({}) ------", GetProperty("xmlfile").asString());
+      KODI::ACCESSIBILITY::CAccessibilityAnnouncer::OnWindow(GetID(), IsDialog(), false);
       OnDeinitWindow(message.GetParam1());
       // now free the window
       if (m_dynamicResourceAlloc) FreeResources();

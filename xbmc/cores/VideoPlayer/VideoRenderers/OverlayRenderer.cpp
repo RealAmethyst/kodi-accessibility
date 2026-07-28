@@ -17,6 +17,7 @@
 #include "cores/VideoPlayer/DVDCodecs/Overlay/DVDOverlayImage.h"
 #include "cores/VideoPlayer/DVDCodecs/Overlay/DVDOverlayLibass.h"
 #include "cores/VideoPlayer/DVDCodecs/Overlay/DVDOverlaySpu.h"
+#include "guilib/AccessibilityAnnouncer.h"
 #include "settings/DisplaySettings.h"
 #include "settings/Settings.h"
 #include "settings/SettingsComponent.h"
@@ -511,6 +512,32 @@ std::shared_ptr<COverlay> CRenderer::ConvertLibass(
   int changes = 0;
   ASS_Image* images =
       o.GetLibassHandler()->RenderImage(pts, rOpts, updateStyle, overlayStyle, &changes);
+
+  // Report the subtitle actually on screen, for accessibility clients.
+  //
+  // Read here rather than at decode time because this pts is the one Kodi has already
+  // applied the subtitle delay to, so seeks, pauses and delay changes are all followed for
+  // free; the external subtitle parser deliberately buffers several overlays ahead, so
+  // decode time would be both early and wrong.
+  //
+  // The change test is the text itself, deliberately not the "changes" flag above: that
+  // flag means the rendered pixels differ, which animations, karaoke and transforms all
+  // cause while the words stay exactly the same.
+  //
+  // Announcing here holds CRenderer::m_section, which is safe: CAnnouncementManager only
+  // queues on the calling thread, and its delivery thread releases the queue lock before
+  // calling into Python (CSingleExit in CAnnouncementManager::Process), so a Python
+  // callback can never be waiting on the lock this thread briefly wants.
+  if (KODI::ACCESSIBILITY::CAccessibilityAnnouncer::SubtitlesEnabled())
+  {
+    std::string subtitleText = o.GetLibassHandler()->GetSubtitleText(pts);
+    if (subtitleText != m_lastAnnouncedSubtitle)
+    {
+      m_lastAnnouncedSubtitle = subtitleText;
+      if (!subtitleText.empty())
+        KODI::ACCESSIBILITY::CAccessibilityAnnouncer::OnSubtitle(subtitleText);
+    }
+  }
 
   // If no images not execute the renderer
   if (!images)

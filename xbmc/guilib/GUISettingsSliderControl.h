@@ -63,6 +63,11 @@ public:
   void SetEnabled(bool bEnable) override;
 
   void SetText(const std::string& label) { m_buttonControl.SetLabel(label); }
+  /*! \brief The slider's own label, without its value appended.
+   *  GetDescription() concatenates the label and the value; accessibility clients need
+   *  them apart, so that "Volume" and "50%" can be spoken as two things rather than one.
+   */
+  std::string GetTextLabel() const { return m_buttonControl.GetDescription(); }
   float GetXPosition() const override { return m_buttonControl.GetXPosition(); }
   float GetYPosition() const override { return m_buttonControl.GetYPosition(); }
   std::string GetDescription() const override;

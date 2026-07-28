@@ -54,6 +54,20 @@ public:
   int GetNrOfEvents() const;
 
   /*!
+  * \brief Get the text shown at the given time, with ASS override tags removed
+  * \param pts The presentation timestamp currently being rendered
+  * \return The visible subtitle text, or an empty string when nothing is shown
+  *
+  * Deliberately its own method, returning a string by value, rather than something a caller
+  * could assemble from GetEvents() and GetNrOfEvents(). Those two cannot be used as a pair:
+  * each takes m_section separately, and GetEvents() hands back m_track->events *after*
+  * releasing the lock, so walking that array races the decoder adding, deleting or
+  * reallocating events underneath it. Here it all happens under one lock acquisition, and
+  * nothing escapes but a deep copy.
+  */
+  std::string GetSubtitleText(double pts);
+
+  /*!
   * \brief Decode Header of ASS/SSA, needed to properly decode
   * demux packets with DecodeDemuxPkt
   * \return True if success, false if error

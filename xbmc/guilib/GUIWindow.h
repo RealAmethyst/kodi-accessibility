@@ -122,6 +122,16 @@ public:
   void FreeResources(bool forceUnLoad = false) override;
   void DynamicResourceAlloc(bool bOnOff) override;
   virtual bool IsDialog() const { return false; }
+
+  /*! \brief Text a window carries that is not reachable as a focusable control.
+   *
+   * A message box is the case this exists for: its question lives in plain
+   * labels, so a client that only hears focus events learns the heading and
+   * "No, button" and never what it is being asked. Empty for ordinary windows,
+   * whose content is reachable by focusing it.
+   */
+  virtual std::string GetAccessibilityText() const { return {}; }
+
   virtual bool IsDialogRunning() const { return false; }
   virtual bool IsModalDialog() const { return false; }
   virtual bool IsMediaWindow() const { return false; }

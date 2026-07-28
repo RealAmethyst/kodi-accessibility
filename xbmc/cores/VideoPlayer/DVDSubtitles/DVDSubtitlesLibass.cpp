@@ -619,6 +619,113 @@ int CDVDSubtitlesLibass::GetNrOfEvents() const
   return m_track->n_events;
 }
 
+namespace
+{
+/*!
+ * \brief Strip ASS override tags, leaving only what is worth speaking.
+ *
+ * Kodi ships no utility for this -- its only tag remover handles HTML -- so the rules live
+ * here. Dropping "{...}" blocks is not enough on its own:
+ *
+ *  - "\p1" and above switch the text that follows into vector drawing mode, where the
+ *    "words" are drawing coordinates. Those must be dropped entirely, not read out, and
+ *    "\p0" switches back. Note "\pos(...)" starts the same way and must not be mistaken
+ *    for it, which is why a digit has to follow the p.
+ *  - "\N" and "\n" are line breaks and "\h" is a hard space, so each becomes a space
+ *    rather than surviving as a stray letter.
+ *  - Karaoke timing tags live inside the braces and disappear with them, which is right:
+ *    the syllables between them are real words and are kept.
+ */
+std::string StripAssTags(const char* text)
+{
+  std::string out;
+  if (!text)
+    return out;
+
+  bool drawing = false;
+  for (const char* p = text; *p; ++p)
+  {
+    if (*p == '{')
+    {
+      const char* close = std::strchr(p, '}');
+      if (!close) // unterminated block; nothing after it can be trusted
+        break;
+
+      for (const char* q = p; q + 2 < close; ++q)
+      {
+        if (q[0] == '\\' && (q[1] == 'p' || q[1] == 'P') && q[2] >= '0' && q[2] <= '9')
+          drawing = (q[2] != '0');
+      }
+      p = close;
+      continue;
+    }
+
+    if (drawing)
+      continue;
+
+    if (*p == '\\' && (p[1] == 'N' || p[1] == 'n' || p[1] == 'h'))
+    {
+      if (!out.empty() && out.back() != ' ')
+        out += ' ';
+      ++p;
+      continue;
+    }
+
+    out += *p;
+  }
+
+  // Collapse the runs of whitespace the substitutions above can leave behind.
+  std::string collapsed;
+  collapsed.reserve(out.size());
+  bool lastWasSpace = false;
+  for (const char c : out)
+  {
+    const bool isSpace = (c == ' ' || c == '\t' || c == '\r' || c == '\n');
+    if (isSpace)
+    {
+      if (!collapsed.empty() && !lastWasSpace)
+        collapsed += ' ';
+    }
+    else
+    {
+      collapsed += c;
+    }
+    lastWasSpace = isSpace;
+  }
+
+  StringUtils::TrimRight(collapsed);
+  return collapsed;
+}
+} // unnamed namespace
+
+std::string CDVDSubtitlesLibass::GetSubtitleText(double pts)
+{
+  std::unique_lock<CCriticalSection> lock(m_section);
+  if (!m_track)
+    return {};
+
+  // Event times are milliseconds, set from DVD_TIME_TO_MSEC in AddEvent, so the timestamp
+  // has to be converted the same way RenderImage does before comparing.
+  const long long now = static_cast<long long>(DVD_TIME_TO_MSEC(pts));
+
+  std::string text;
+  for (int i = 0; i < m_track->n_events; ++i)
+  {
+    const ASS_Event& event = m_track->events[i];
+    if (!event.Text || now < event.Start || now >= event.Start + event.Duration)
+      continue;
+
+    const std::string line = StripAssTags(event.Text);
+    if (line.empty())
+      continue;
+
+    if (!text.empty())
+      text += ' ';
+    text += line;
+  }
+  return text;
+}
+
 int CDVDSubtitlesLibass::AddEvent(const char* text, double startTime, double stopTime)
 {
   return AddEvent(text, startTime, stopTime, nullptr);

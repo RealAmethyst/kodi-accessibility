@@ -142,6 +142,15 @@ void CGUIDialogBoxBase::Process(unsigned int currentTime, CDirtyRegionList &dirt
   CGUIDialog::Process(currentTime, dirtyregions);
 }
 
+std::string CGUIDialogBoxBase::GetAccessibilityText() const
+{
+  // The question itself. It lives in plain labels rather than anything
+  // focusable, so without this a client hears the heading and "No, button" and
+  // never learns what it is being asked.
+  std::unique_lock<CCriticalSection> lock(m_section);
+  return m_text;
+}
+
 void CGUIDialogBoxBase::OnInitWindow()
 {
   // set focus to default

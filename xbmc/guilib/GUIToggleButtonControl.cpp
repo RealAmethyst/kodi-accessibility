@@ -74,8 +74,9 @@ bool CGUIToggleButtonControl::OnAction(const CAction &action)
 {
   if (action.GetID() == ACTION_SELECT_ITEM)
   {
-    m_bSelected = !m_bSelected;
-    SetInvalid();
+    // See the note in CGUIRadioButtonControl::OnAction. SetSelected invalidates
+    // on a real change, which this always is.
+    SetSelected(!m_bSelected);
   }
   return CGUIButtonControl::OnAction(action);
 }

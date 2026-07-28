@@ -64,6 +64,22 @@ public:
 
   void SetInputType(INPUT_TYPE type, const CVariant& heading);
 
+  /*! \brief Whether this field holds a secret, so its contents must never be exposed.
+   *
+   * GetLabel2() deliberately returns the real typed text -- masking lives only in the
+   * protected GetDisplayedText(). Anything that reads a control's value for accessibility
+   * has to ask this first: a password must not be spoken aloud, and must not be broadcast
+   * to every addon listening for announcements.
+   */
+  bool IsPasswordInput() const
+  {
+    return m_inputType == INPUT_TYPE_PASSWORD || m_inputType == INPUT_TYPE_PASSWORD_MD5 ||
+           m_inputType == INPUT_TYPE_PASSWORD_NUMBER_VERIFY_NEW;
+  }
+
+  //! \brief Whether the field cannot be edited.
+  bool IsReadOnly() const { return m_inputType == INPUT_TYPE_READONLY; }
+
   void SetTextChangeActions(const CGUIAction& textChangeActions)
   {
     m_textChangeActions = textChangeActions;

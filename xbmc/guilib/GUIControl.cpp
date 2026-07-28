@@ -8,6 +8,7 @@
 
 #include "GUIControl.h"
 
+#include "AccessibilityAnnouncer.h"
 #include "GUIAction.h"
 #include "GUIComponent.h"
 #include "GUIControlProfiler.h"
@@ -365,6 +366,13 @@ bool CGUIControl::OnMessage(CGUIMessage& message)
         if (m_parentControl)
           m_parentControl->OnMessage(message);
       }
+      // Announce from here rather than from the window's GUI_MSG_FOCUSED handler, because
+      // derived windows can consume that message before the base class ever sees it, and
+      // both Python's WindowXML and native addon windows do. This is also the point where
+      // focus has actually succeeded: CanFocus() passed above and SetFocus(true) has run.
+      // Raw SetFocus(bool) is deliberately not hooked, since it is also used for cosmetic
+      // focus that should not be spoken.
+      KODI::ACCESSIBILITY::CAccessibilityAnnouncer::OnControlFocus(this);
       return true;
       break;
 

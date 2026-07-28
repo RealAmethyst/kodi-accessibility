@@ -62,6 +62,12 @@ public:
   void SaveStates(std::vector<CControlState> &states) override;
   virtual int GetSelectedItem() const;
 
+  /*! \brief How many items the container holds.
+   *  Exposed for accessibility announcements, which have to say "3 of 40"; GetDescription()
+   *  gives out only the selected item's label and no count at all.
+   */
+  size_t GetItemCount() const { return GetNumItems(); }
+
   void DoProcess(unsigned int currentTime, CDirtyRegionList &dirtyregions) override;
   void Process(unsigned int currentTime, CDirtyRegionList &dirtyregions) override;
 
@@ -99,6 +105,12 @@ public:
 protected:
   EVENT_RESULT OnMouseEvent(const CPoint& point, const KODI::MOUSE::CMouseEvent& event) override;
   bool OnClick(int actionID);
+
+  /*! \brief Take focus once items arrive, if the window ended up with none.
+   *  An empty container cannot be focused, so a focus request made while the
+   *  directory was still loading is dropped and never retried.
+   */
+  void RequestFocusIfWindowHasNone();
 
   virtual void ProcessItem(float posX,
                            float posY,
@@ -147,6 +159,9 @@ protected:
   std::vector<std::shared_ptr<CGUIListItem>> m_items;
   typedef std::vector<std::shared_ptr<CGUIListItem>>::iterator iItems;
   std::shared_ptr<CGUIListItem> m_lastItem;
+
+  //! \brief Selection last reported to accessibility clients; -1 until something is.
+  int m_lastAnnouncedItem{-1};
 
   int m_pageControl;
 

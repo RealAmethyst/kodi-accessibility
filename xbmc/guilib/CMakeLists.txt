@@ -1,4 +1,5 @@
-set(SOURCES DDSImage.cpp
+set(SOURCES AccessibilityAnnouncer.cpp
+            DDSImage.cpp
             DirtyRegionSolvers.cpp
             DirtyRegionTracker.cpp
             FFmpegImage.cpp
@@ -71,7 +72,8 @@ set(SOURCES DDSImage.cpp
             XBTF.cpp
             XBTFReader.cpp)
 
-set(HEADERS DDSImage.h
+set(HEADERS AccessibilityAnnouncer.h
+            DDSImage.h
             DirtyRegion.h
             DirtyRegionSolvers.h
             DirtyRegionTracker.h

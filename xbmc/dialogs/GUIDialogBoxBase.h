@@ -38,6 +38,7 @@ public:
   void SetHeading(const CVariant& heading);
   bool HasHeading() const;
   void SetChoice(int iButton, const CVariant &choice);
+  std::string GetAccessibilityText() const override;
 protected:
   std::string GetDefaultLabel(int controlId) const;
   virtual int GetDefaultLabelID(int controlId) const;

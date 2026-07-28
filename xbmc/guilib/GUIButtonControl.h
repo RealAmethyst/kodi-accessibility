@@ -56,6 +56,11 @@ public:
   virtual std::string GetLabel() const { return GetDescription(); }
   virtual std::string GetLabel2() const;
   void SetSelected(bool bSelected);
+  /*! \brief Whether the button is in its selected state.
+   *  Exposed so accessibility clients get a boolean instead of having to notice the
+   *  " (*)" that CGUIRadioButtonControl::GetDescription() appends to the label.
+   */
+  bool IsSelected() const { return m_bSelected; }
   std::string GetDescription() const override;
   float GetWidth() const override;
   virtual void SetMinWidth(float minWidth);

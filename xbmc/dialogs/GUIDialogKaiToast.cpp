@@ -9,6 +9,7 @@
 #include "GUIDialogKaiToast.h"
 
 #include "ServiceBroker.h"
+#include "guilib/AccessibilityAnnouncer.h"
 #include "guilib/GUIFadeLabelControl.h"
 #include "guilib/GUIMessage.h"
 #include "peripherals/Peripherals.h"
@@ -113,6 +114,15 @@ bool CGUIDialogKaiToast::DoWork()
 
     m_toastDisplayTime = toast.displayTime;
     m_toastMessageTime = toast.messageTime;
+
+    // Announced here, from the strings the dialog already holds, and deliberately before the
+    // graphics context is locked below: the announcement thread delivers into Python, which
+    // can call straight back into the GUI, so announcing under that lock invites a deadlock.
+    //
+    // This is also the only way toasts can be read at all. They are non-modal, so they show
+    // up neither as the current dialog nor as the info-label context, and the text below
+    // lands in fadelabels that Kodi's Python wrapper cannot read back.
+    KODI::ACCESSIBILITY::CAccessibilityAnnouncer::OnNotification(toast.caption, toast.description);
 
     std::unique_lock<CCriticalSection> lock2(CServiceBroker::GetWinSystem()->GetGfxContext());
 

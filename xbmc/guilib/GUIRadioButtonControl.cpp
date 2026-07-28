@@ -119,7 +119,11 @@ bool CGUIRadioButtonControl::OnAction(const CAction &action)
 {
   if (action.GetID() == ACTION_SELECT_ITEM)
   {
-    m_bSelected = !m_bSelected;
+    // Through SetSelected rather than writing the member directly, so the state
+    // change is reported for accessibility. This is the path a real keypress
+    // takes, so hooking only SetSelected() left the common case — actually
+    // toggling a setting — announcing nothing at all.
+    SetSelected(!m_bSelected);
     MarkDirtyRegion();
   }
   return CGUIButtonControl::OnAction(action);

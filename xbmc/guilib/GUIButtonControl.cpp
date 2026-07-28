@@ -8,6 +8,7 @@
 
 #include "GUIButtonControl.h"
 
+#include "AccessibilityAnnouncer.h"
 #include "GUIFontManager.h"
 #include "input/actions/Action.h"
 #include "input/actions/ActionIDs.h"
@@ -236,16 +237,14 @@ bool CGUIButtonControl::OnMessage(CGUIMessage& message)
     }
     if (message.GetMessage() == GUI_MSG_SET_SELECTED)
     {
-      if (!m_bSelected)
-        SetInvalid();
-      m_bSelected = true;
+      // SetSelected does exactly what this did — invalidate only on a real
+      // change — and additionally reports the change for accessibility.
+      SetSelected(true);
       return true;
     }
     if (message.GetMessage() == GUI_MSG_SET_DESELECTED)
     {
-      if (m_bSelected)
-        SetInvalid();
-      m_bSelected = false;
+      SetSelected(false);
       return true;
     }
   }
@@ -409,5 +408,12 @@ void CGUIButtonControl::SetSelected(bool bSelected)
   {
     m_bSelected = bSelected;
     SetInvalid();
+    // Toggling a radio or toggle button changes no focus and moves no list
+    // selection, so without this the very thing the user just pressed reports
+    // nothing at all and the new state is never spoken. Only the focused
+    // control reports, so a skin quietly updating background toggles stays
+    // quiet.
+    if (HasFocus())
+      KODI::ACCESSIBILITY::CAccessibilityAnnouncer::OnControlFocus(this);
   }
 }

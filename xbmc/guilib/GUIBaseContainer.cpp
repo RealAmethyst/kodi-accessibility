@@ -8,7 +8,11 @@
 
 #include "GUIBaseContainer.h"
 
+#include "AccessibilityAnnouncer.h"
 #include "FileItem.h"
+#include "GUIComponent.h"
+#include "GUIWindow.h"
+#include "GUIWindowManager.h"
 #include "GUIInfoManager.h"
 #include "GUIListItemLayout.h"
 #include "GUIMessage.h"
@@ -129,6 +133,31 @@ void CGUIBaseContainer::DoProcess(unsigned int currentTime, CDirtyRegionList &di
   if (!IsVisible() && m_autoScrollMoveTime)
   {
     ResetAutoScrolling();
+  }
+
+  // Report selection changes for accessibility. Moving through a list changes no control
+  // focus at all -- the container keeps focus and only its cursor moves, and
+  // SetCursor()/SetOffset() just set the member and mark the region dirty -- so this is the
+  // only place it can be noticed, and it catches every cause at once: keyboard, mouse,
+  // letter-jump and programmatic selection alike.
+  //
+  // Deliberately here in DoProcess() rather than in Process(): CGUIPanelContainer overrides
+  // Process() and never calls the base version, so a hook there would silently miss every
+  // panel -- which is the poster and thumbnail view most skins use. Nothing overrides
+  // DoProcess(), so every container subclass is covered. By this point CGUIControl::DoProcess
+  // has already run Process(), so the offsets are valid.
+  //
+  // In the common case this is one integer comparison against a value already in hand, and
+  // nothing further runs. Only a container that actually holds focus reports, so background
+  // lists stay quiet.
+  if (HasFocus())
+  {
+    const int selectedItem = GetSelectedItem();
+    if (selectedItem != m_lastAnnouncedItem)
+    {
+      m_lastAnnouncedItem = selectedItem;
+      KODI::ACCESSIBILITY::CAccessibilityAnnouncer::OnContainerSelection(this);
+    }
   }
 }
 
@@ -490,6 +519,7 @@ bool CGUIBaseContainer::OnMessage(CGUIMessage& message)
         UpdateLayout(true); // true to refresh all items
         UpdateScrollByLetter();
         SelectItem(message.GetParam1());
+        RequestFocusIfWindowHasNone();
         return true;
       }
       else if (message.GetMessage() == GUI_MSG_LABEL_RESET)
@@ -939,6 +969,11 @@ void CGUIBaseContainer::SetFocus(bool bOnOff)
   {
     SetInvalid();
     m_lastItem.reset();
+    // Start from the current selection rather than from -1. The focus announcement already
+    // carries this item, so without priming, the very next Process() would say the same
+    // thing a second time and talk over the window heading.
+    if (bOnOff)
+      m_lastAnnouncedItem = GetSelectedItem();
   }
   CGUIControl::SetFocus(bOnOff);
 }
@@ -1256,12 +1291,48 @@ int CGUIBaseContainer::CorrectOffset(int offset, int cursor) const
   return offset + cursor;
 }
 
+void CGUIBaseContainer::RequestFocusIfWindowHasNone()
+{
+  // Kodi asks a window to focus its saved control while opening, but a container
+  // with no items reports CanFocus() == false, so that request is dropped with
+  // an error and never retried. When the directory then arrives asynchronously —
+  // which is the normal case for a network source, and what the Jellyfin addon
+  // does after playback stops — the window is left with nothing focused at all.
+  //
+  // For a sighted user that shows up as the list not being highlighted until
+  // they press something. For a screen reader it is worse: focus is the only
+  // thing that says "here is where you are", so there is nothing to announce
+  // and the reader goes quiet for as long as it takes.
+  //
+  // So ask again, now that there is something to focus. Deliberately only when
+  // the window has no focused control whatsoever, which means this can never
+  // take focus away from wherever the user actually is.
+  if (HasFocus())
+    return;
+
+  CGUIComponent* gui = CServiceBroker::GetGUI();
+  if (!gui)
+    return;
+
+  CGUIWindow* window = gui->GetWindowManager().GetWindow(GetParentID());
+  if (!window || window->GetFocusedControlID() != 0)
+    return;
+
+  CGUIMessage focusMessage(GUI_MSG_SETFOCUS, GetParentID(), GetID());
+  window->OnMessage(focusMessage);
+}
+
 void CGUIBaseContainer::Reset()
 {
   m_wasReset = true;
   m_items.clear();
   m_lastItem.reset();
   ResetAutoScrolling();
+  // Forget what was last announced, because the items about to arrive are different ones.
+  // Without this, entering the *first* folder of a list is silent: the content changes
+  // completely but the selected index stays 0, so the comparison in Process() sees nothing
+  // to report and the new folder's first item is never spoken.
+  m_lastAnnouncedItem = -1;
 }
 
 void CGUIBaseContainer::LoadLayout(TiXmlElement *layout)
