@@ -15,6 +15,7 @@
 #include <string>
 
 class CGUIControl;
+class CGUIWindow;
 
 namespace KODI
 {
@@ -42,6 +43,7 @@ struct CAccessibilityNode
 
   //! \brief Whether a dialog is modal, and so actually where the user is.
   bool modal = false;
+  bool initializing = false;
 
   int control = -1;
 
@@ -57,6 +59,7 @@ struct CAccessibilityNode
 
   //! \brief The second line, for controls and items that have one.
   std::string secondary;
+  std::string detail;
 
   //! \brief 1-based position within a container; -1 when the control is not in one.
   int index = -1;
@@ -154,7 +157,8 @@ public:
                        bool modal,
                        bool opening,
                        const std::string& heading = {},
-                       const std::string& text = {});
+                       const std::string& text = {},
+                       bool initializing = false);
 
   /*!
    * \brief A toast notification was shown.
@@ -203,6 +207,8 @@ public:
    * safe to stop polling.
    */
   static std::string GetSnapshotJSON();
+  static bool NeedsSnapshotRefresh() { return m_refreshRequested; }
+  static void RefreshSnapshot(const CGUIWindow* window);
 
   /*!
    * \brief Whether to do the per-frame work needed to notice subtitle changes.
@@ -243,6 +249,8 @@ private:
   static bool BuildNode(const CGUIControl* control, CAccessibilityNode& node);
 
   static std::atomic<bool> m_subtitlesEnabled;
+  static std::atomic<bool> m_refreshRequested;
+  static std::atomic<bool> m_refreshing;
 
   /*!
    * \brief Stamped on every announcement, so a snapshot can be ordered against them.
@@ -266,6 +274,7 @@ private:
     int window = -1;
     bool dialog = false;
     bool modal = false;
+    bool initializing = false;
     std::string heading;
     std::string text;
     bool hasFocus = false;

@@ -131,6 +131,7 @@ public:
    * whose content is reachable by focusing it.
    */
   virtual std::string GetAccessibilityText() const { return {}; }
+  virtual bool IsAccessibilityInitializing() const { return false; }
 
   /*! \brief What this window is called, for a client to announce on entering it.
    *
@@ -313,4 +314,3 @@ private:
   std::map<std::string, CVariant, icompare> m_mapProperties;
   std::map<INFO::InfoPtr, bool> m_xmlIncludeConditions; ///< \brief used to store conditions used to resolve includes for this window
 };
-

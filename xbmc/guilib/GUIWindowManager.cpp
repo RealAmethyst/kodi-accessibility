@@ -7,12 +7,14 @@
  */
 
 #include "GUIWindowManager.h"
+#include "AccessibilityAnnouncer.h"
 
 #include "GUIAudioManager.h"
 #include "GUIDialog.h"
 #include "GUIInfoManager.h"
 #include "GUIPassword.h"
 #include "GUITexture.h"
+#include "GUITextLayout.h"
 #include "ServiceBroker.h"
 #include "WindowIDs.h"
 #include "addons/Skin.h"
@@ -44,6 +46,7 @@
 #include "settings/windows/GUIWindowSettingsScreenCalibration.h"
 #include "threads/SingleLock.h"
 #include "utils/StringUtils.h"
+#include "utils/JSONVariantWriter.h"
 #include "utils/URIUtils.h"
 #include "utils/Variant.h"
 #include "utils/log.h"
@@ -1077,6 +1080,32 @@ void CGUIWindowManager::OnApplicationMessage(ThreadMessage* pMsg)
     }
     break;
 
+  case TMSG_GUI_ACCESSIBILITY_TEXT:
+    if (pMsg->lpVoid)
+    {
+      auto* window = GetWindow(GetActiveWindowOrDialog());
+      if (window)
+      {
+        CVariant data(CVariant::VariantTypeObject);
+        data["window"] = window->GetID();
+        data["dialog"] = window->IsDialog();
+        std::string heading = window->GetAccessibilityHeading();
+        CGUITextLayout::Filter(heading);
+        data["heading"] = heading;
+        std::string text = window->GetAccessibilityText();
+        if (text.empty() && window->IsDialog())
+        {
+          std::vector<std::string> labels;
+          window->GetAccessibilityLabels(labels);
+          text = StringUtils::Join(labels, "\n");
+        }
+        CGUITextLayout::Filter(text);
+        data["text"] = text;
+        CJSONVariantWriter::Write(data, *static_cast<std::string*>(pMsg->lpVoid), true);
+      }
+    }
+    break;
+
   case TMSG_GUI_DIALOG_YESNO:
   {
 
@@ -1222,6 +1251,14 @@ void CGUIWindowManager::Process(unsigned int currentTime)
     CGUIWindow *pWindow = entry.second;
     if (pWindow && pWindow->IsDialog())
       pWindow->DoProcess(currentTime, m_dirtyregions);
+  }
+
+  if (KODI::ACCESSIBILITY::CAccessibilityAnnouncer::NeedsSnapshotRefresh())
+  {
+    int id = GetTopmostModalDialog();
+    if (id == WINDOW_INVALID)
+      id = GetActiveWindow();
+    KODI::ACCESSIBILITY::CAccessibilityAnnouncer::RefreshSnapshot(GetWindow(id));
   }
 
   for (auto& itr : m_dirtyregions)

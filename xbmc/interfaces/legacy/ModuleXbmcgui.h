@@ -139,6 +139,9 @@ namespace XBMCAddon
 #else
     String getAccessibilitySnapshot();
 #endif
+    /// Read the active dialog's visible passive text on Kodi's GUI thread.
+    /// Returns JSON with window, dialog, heading and text; empty on shutdown.
+    String getAccessibilityWindowText();
     ///@}
 
 #ifndef DOXYGEN_SHOULD_SKIP_THIS

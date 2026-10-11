@@ -13,6 +13,7 @@
 #include "guilib/AccessibilityAnnouncer.h"
 #include "guilib/GUIComponent.h"
 #include "guilib/GUIWindowManager.h"
+#include "messaging/ApplicationMessenger.h"
 #include "windowing/GraphicContext.h"
 
 #include <mutex>
@@ -61,6 +62,14 @@ namespace XBMCAddon
       // the graphics lock, so reading them from this thread would be a lifetime race
       // rather than merely a slow call.
       return KODI::ACCESSIBILITY::CAccessibilityAnnouncer::GetSnapshotJSON();
+    }
+
+    String getAccessibilityWindowText()
+    {
+      DelayedCallGuard dg;
+      std::string result;
+      CServiceBroker::GetAppMessenger()->SendMsg(TMSG_GUI_ACCESSIBILITY_TEXT, -1, -1, &result);
+      return result;
     }
 
     const char* getNOTIFICATION_INFO()    { return NOTIFICATION_INFO; }

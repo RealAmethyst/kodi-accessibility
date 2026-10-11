@@ -55,6 +55,8 @@ public:
 
   int GetFocusedControlID() const;
   CGUIControl *GetFocusedControl() const;
+  // GUI thread only. Includes passive visible text, never editable contents.
+  void GetAccessibilityLabels(std::vector<std::string>& labels) const;
   virtual CGUIControl *GetFirstFocusableControl(int id);
 
   virtual void AddControl(CGUIControl *control, int position = -1);
@@ -121,4 +123,3 @@ private:
     std::vector<CGUIControl *> *m_collector;
   };
 };
-

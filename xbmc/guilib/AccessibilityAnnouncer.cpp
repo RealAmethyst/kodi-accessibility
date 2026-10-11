@@ -9,6 +9,9 @@
 #include "AccessibilityAnnouncer.h"
 
 #include "GUIBaseContainer.h"
+#include "FileItem.h"
+#include "GUIInfoManager.h"
+#include "guilib/guiinfo/GUIInfoLabels.h"
 #include "GUIButtonControl.h"
 #include "GUIComponent.h"
 #include "GUIControlGroupList.h"
@@ -29,6 +32,7 @@
 #include "windowing/GraphicContext.h"
 #include "windowing/WinSystem.h"
 
+#include <array>
 #include <mutex>
 
 namespace KODI
@@ -37,6 +41,8 @@ namespace ACCESSIBILITY
 {
 
 std::atomic<bool> CAccessibilityAnnouncer::m_subtitlesEnabled{true};
+std::atomic<bool> CAccessibilityAnnouncer::m_refreshRequested{true};
+std::atomic<bool> CAccessibilityAnnouncer::m_refreshing{false};
 std::atomic<uint64_t> CAccessibilityAnnouncer::m_sequence{0};
 CAccessibilityAnnouncer::SnapshotState CAccessibilityAnnouncer::m_state;
 CCriticalSection CAccessibilityAnnouncer::m_stateSection;
@@ -150,6 +156,7 @@ CVariant NodeToVariant(const CAccessibilityNode& node)
   data["window"] = node.window;
   data["dialog"] = node.dialog;
   data["modal"] = node.modal;
+  data["initializing"] = node.initializing;
   data["control"] = node.control;
   data["role"] = node.role;
   // Everything a client might speak is filtered here, in the one place every
@@ -158,6 +165,7 @@ CVariant NodeToVariant(const CAccessibilityNode& node)
   data["value"] = PlainText(node.value);
   data["state"] = node.state;
   data["secondary"] = PlainText(node.secondary);
+  data["detail"] = PlainText(node.detail);
   data["index"] = node.index;
   data["total"] = node.total;
   data["isFolder"] = node.isFolder;
@@ -219,6 +227,31 @@ bool CAccessibilityAnnouncer::BuildNode(const CGUIControl* control, CAccessibili
         node.name = item->GetLabel();
         node.secondary = item->GetLabel2();
         node.isFolder = item->m_bIsFolder;
+
+        // Resolve the same visible detail sources on the GUI thread, against
+        // this item. An add-on must not acquire GUI locks to read them later.
+        if (const auto* file = dynamic_cast<const CFileItem*>(item.get()))
+        {
+          auto& info = CServiceBroker::GetGUI()->GetInfoManager();
+          static const std::array<int, 7> detailIds = [&info]()
+          {
+            std::array<int, 7> ids{};
+            const std::array<const char*, 7> labels{
+                "ListItem.Plot", "Container.ShowPlot", "ListItem.Property(Artist_Description)",
+                "ListItem.Property(Album_Description)", "ListItem.AddonSummary",
+                "ListItem.AddonDescription", "ListItem.Comment"};
+            for (size_t i = 0; i < labels.size(); ++i)
+              ids[i] = info.TranslateString(labels[i]);
+            return ids;
+          }();
+          for (int id : detailIds)
+          {
+            node.detail = id == CONTAINER_SHOWPLOT ? info.GetLabel(id, node.window)
+                                                  : info.GetItemLabel(file, node.window, id);
+            if (!node.detail.empty())
+              break;
+          }
+        }
 
         // Which entry is the one currently in force. A select dialog -- what a settings
         // "dropdown" actually opens -- marks its current value this way, and without it a
@@ -323,17 +356,26 @@ void CAccessibilityAnnouncer::RecordState(StateKind kind,
 
   if (kind == StateKind::Window)
   {
+    m_refreshRequested = true;
     // Only an opening replaces where we are. A close tells us a window went away but not
     // what is underneath it, and Kodi does not re-focus the control below a dialog that
     // closes -- it was never unfocused, so no focus event follows. Overwriting the record
     // with nothing would leave a client that started at that moment knowing less than
     // before, so the last place we actually knew about is kept.
     if (node.state != "opened")
+    {
+      if (node.window == m_state.window && m_state.initializing)
+      {
+        m_state = SnapshotState();
+        m_state.seq = seq;
+      }
       return;
+    }
 
     m_state.window = node.window;
     m_state.dialog = node.dialog;
     m_state.modal = node.modal;
+    m_state.initializing = node.initializing;
     m_state.heading = node.name;
     m_state.text = node.secondary;
 
@@ -439,7 +481,8 @@ void CAccessibilityAnnouncer::OnWindow(int windowID,
                                        bool modal,
                                        bool opening,
                                        const std::string& heading,
-                                       const std::string& text)
+                                       const std::string& text,
+                                       bool initializing)
 {
   // The toast dialog reports itself separately, with its actual text. Letting it also open
   // and close as a window would have a client announce a nameless dialog either side of
@@ -454,6 +497,7 @@ void CAccessibilityAnnouncer::OnWindow(int windowID,
   node.role = "window";
   node.name = heading;
   node.state = opening ? "opened" : "closed";
+  node.initializing = initializing;
   node.secondary = text;
 
   // A dialog that is not modal is not where the user is. The event still goes out, because
@@ -484,6 +528,35 @@ void CAccessibilityAnnouncer::OnSubtitle(const std::string& text)
   Send("OnAccessibilitySubtitle", node, StateKind::None);
 }
 
+void CAccessibilityAnnouncer::RefreshSnapshot(const CGUIWindow* window)
+{
+  // Called after GUI processing, never from an add-on thread. In particular,
+  // closing a dialog must restore the underlying focus even without a focus event.
+  if (!window)
+    return;
+  m_refreshing = true;
+  if (!m_refreshRequested.exchange(false))
+  {
+    m_refreshing = false;
+    return;
+  }
+  SnapshotState state;
+  state.window = window->GetID();
+  state.dialog = window->IsDialog();
+  state.modal = window->IsModalDialog();
+  state.initializing = window->IsAccessibilityInitializing();
+  if (!state.initializing)
+  {
+    state.heading = window->GetAccessibilityHeading();
+    state.text = window->GetAccessibilityText();
+    state.hasFocus = BuildNode(window->GetFocusedControl(), state.focus);
+  }
+  std::unique_lock<CCriticalSection> lock(m_stateSection);
+  state.seq = ++m_sequence;
+  m_state = std::move(state);
+  m_refreshing = false;
+}
+
 std::string CAccessibilityAnnouncer::GetSnapshotJSON()
 {
   CVariant data(CVariant::VariantTypeObject);
@@ -502,6 +575,7 @@ std::string CAccessibilityAnnouncer::GetSnapshotJSON()
   capabilities.push_back("notification");
   capabilities.push_back("subtitle");
   capabilities.push_back("snapshot");
+  capabilities.push_back("liveSnapshot");
   data["capabilities"] = std::move(capabilities);
 
   // A copy of what Kodi's own thread last recorded, and nothing else. No window manager, no
@@ -512,6 +586,7 @@ std::string CAccessibilityAnnouncer::GetSnapshotJSON()
   {
     std::unique_lock<CCriticalSection> lock(m_stateSection);
     state = m_state;
+    data["current"] = !m_refreshRequested && !m_refreshing;
   }
 
   data["seq"] = state.seq;
@@ -524,6 +599,7 @@ std::string CAccessibilityAnnouncer::GetSnapshotJSON()
   data["window"] = state.window;
   data["dialog"] = state.dialog;
   data["modal"] = state.modal;
+  data["initializing"] = state.initializing;
   data["heading"] = PlainText(state.heading);
   data["text"] = PlainText(state.text);
 

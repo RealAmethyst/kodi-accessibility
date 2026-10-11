@@ -600,7 +600,8 @@ bool CGUIWindow::OnMessage(CGUIMessage& message)
       KODI::ACCESSIBILITY::CAccessibilityAnnouncer::OnWindow(GetID(), IsDialog(),
                                                              IsModalDialog(), true,
                                                              GetAccessibilityHeading(),
-                                                             GetAccessibilityText());
+                                                             GetAccessibilityText(),
+                                                             IsAccessibilityInitializing());
       OnInitWindow();
       return true;
     }

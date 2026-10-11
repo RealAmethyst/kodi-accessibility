@@ -16,6 +16,7 @@
 #include "addons/addoninfo/AddonInfo.h"
 #include "addons/addoninfo/AddonType.h"
 #include "guilib/GUIComponent.h"
+#include "guilib/AccessibilityAnnouncer.h"
 #include "guilib/GUIWindowManager.h"
 #include "guilib/TextureManager.h"
 #include "input/actions/Action.h"
@@ -25,6 +26,8 @@
 #include "utils/URIUtils.h"
 
 #include <mutex>
+#include <atomic>
+#include <memory>
 
 // These #defs are for WindowXML
 #define CONTROL_BTNVIEWASICONS  2
@@ -53,10 +56,44 @@ namespace XBMCAddon
     class WindowXMLInterceptor : public InterceptorDialog<CGUIMediaWindow>
     {
       WindowXML* xwin;
+      std::shared_ptr<std::atomic<bool>> m_accessibilityInit;
     public:
       WindowXMLInterceptor(WindowXML* _window, int windowid,const char* xmlfile) :
         InterceptorDialog<CGUIMediaWindow>("CGUIMediaWindow",_window,windowid,xmlfile), xwin(_window)
       { }
+
+      std::string GetAccessibilityHeading() const override
+      {
+        // Dynamic Python window IDs are not localization IDs. A coincidentally
+        // matching Kodi string is not this add-on's displayed heading.
+        return {};
+      }
+
+      bool IsAccessibilityInitializing() const override
+      {
+        return m_accessibilityInit != nullptr;
+      }
+
+      std::string GetAccessibilityText() const override
+      {
+        if (!IsDialog() || IsAccessibilityInitializing())
+          return {};
+        std::vector<std::string> labels;
+        GetAccessibilityLabels(labels);
+        return StringUtils::Join(labels, "\n");
+      }
+
+      void AnnounceInitializedDialog()
+      {
+        if (!m_accessibilityInit || !m_accessibilityInit->load() ||
+            CServiceBroker::GetGUI()->GetWindowManager().GetTopmostModalDialog() != GetID())
+          return;
+        m_accessibilityInit.reset();
+        KODI::ACCESSIBILITY::CAccessibilityAnnouncer::OnWindow(
+            GetID(), IsDialog(), IsModalDialog(), true, GetAccessibilityHeading(),
+            GetAccessibilityText());
+        KODI::ACCESSIBILITY::CAccessibilityAnnouncer::OnControlFocus(GetFocusedControl());
+      }
 
       void AllocResources(bool forceLoad = false) override
       { XBMC_TRACE; if(up()) CGUIMediaWindow::AllocResources(forceLoad); else checkedv(AllocResources(forceLoad)); }
@@ -86,6 +123,25 @@ namespace XBMCAddon
       friend class WindowXML;
       friend class WindowXMLDialog;
 
+    };
+
+    // Completion carries no GUI pointer across threads. Each opening owns a new
+    // token, so a late callback from a closed dialog cannot complete its successor.
+    class DialogInitCallback : public CallbackFunction<WindowXML>
+    {
+      std::shared_ptr<std::atomic<bool>> m_complete;
+    public:
+      DialogInitCallback(WindowXML* window, std::shared_ptr<std::atomic<bool>> complete)
+        : CallbackFunction<WindowXML>(window, &WindowXML::onInit),
+          m_complete(std::move(complete))
+      {
+      }
+
+      void executeCallback() override
+      {
+        CallbackFunction<WindowXML>::executeCallback();
+        m_complete->store(true);
+      }
     };
 
     WindowXML::~WindowXML() { XBMC_TRACE; deallocating();  }
@@ -312,14 +368,20 @@ namespace XBMCAddon
       {
       case GUI_MSG_WINDOW_DEINIT:
         {
+          interceptor->m_accessibilityInit.reset();
           return ref(window)->OnMessage(message);
         }
         break;
 
       case GUI_MSG_WINDOW_INIT:
         {
+          if (interceptor->IsDialog())
+            interceptor->m_accessibilityInit = std::make_shared<std::atomic<bool>>(false);
           ref(window)->OnMessage(message);
-          invokeCallback(new CallbackFunction<WindowXML>(this,&WindowXML::onInit));
+          if (interceptor->m_accessibilityInit)
+            invokeCallback(new DialogInitCallback(this, interceptor->m_accessibilityInit));
+          else
+            invokeCallback(new CallbackFunction<WindowXML>(this,&WindowXML::onInit));
           PulseActionEvent();
           return true;
         }
@@ -438,6 +500,8 @@ namespace XBMCAddon
       CServiceBroker::GetGUI()->GetTextureManager().AddTexturePath(m_mediaDir);
       ref(window)->Process(currentTime, regions);
       CServiceBroker::GetGUI()->GetTextureManager().RemoveTexturePath(m_mediaDir);
+      // Process has resolved label text and ancestor visibility for this frame.
+      interceptor->AnnounceInitializedDialog();
     }
 
     bool WindowXML::OnClick(int iItem)
@@ -491,7 +555,10 @@ namespace XBMCAddon
     {
       XBMC_TRACE;
       if (message.GetMessage() == GUI_MSG_WINDOW_DEINIT)
+      {
+        interceptor->m_accessibilityInit.reset();
         return A(CGUIWindow::OnMessage(message));
+      }
 
       return WindowXML::OnMessage(message);
     }

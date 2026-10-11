@@ -16,6 +16,34 @@
 
 using namespace KODI;
 
+void CGUIControlGroup::GetAccessibilityLabels(std::vector<std::string>& labels) const
+{
+  for (const auto* child : m_children)
+  {
+    if (!child->IsVisible())
+      continue;
+
+    switch (child->GetControlType())
+    {
+      case GUICONTROL_GROUP:
+      case GUICONTROL_GROUPLIST:
+        static_cast<const CGUIControlGroup*>(child)->GetAccessibilityLabels(labels);
+        break;
+      case GUICONTROL_LABEL:
+      case GUICONTROL_TEXTBOX:
+      case GUICONTROL_FADELABEL:
+      {
+        const auto text = child->GetDescription();
+        if (!text.empty())
+          labels.emplace_back(text);
+        break;
+      }
+      default:
+        break;
+    }
+  }
+}
+
 CGUIControlGroup::CGUIControlGroup()
 {
   m_defaultControl = 0;
