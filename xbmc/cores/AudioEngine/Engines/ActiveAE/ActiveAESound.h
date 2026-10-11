@@ -11,6 +11,9 @@
 #include "cores/AudioEngine/Engines/ActiveAE/ActiveAEBuffer.h"
 #include "cores/AudioEngine/Interfaces/AESound.h"
 
+#include <deque>
+#include <future>
+
 class DllAvUtil;
 
 namespace XFILE
@@ -45,6 +48,8 @@ public:
   bool IsConverted() { return m_isConverted; }
   void SetConverted(bool state) { m_isConverted = state; }
 
+  bool Convert(const SampleConfig& config, const CAEChannelInfo& channels, AEQuality quality);
+
   bool Prepare();
   void Finish();
   int GetChunkSize();
@@ -63,8 +68,17 @@ protected:
   float m_volume = 1.0f;
   AEChannel m_channel = AE_CH_NULL;
 
-  CSoundPacket *m_orig_sound;
-  CSoundPacket *m_dst_sound;
+  std::shared_ptr<CSoundPacket> m_orig_sound;
+  std::shared_ptr<CSoundPacket> m_dst_sound;
+  struct Conversion
+  {
+    SampleConfig config;
+    CAEChannelInfo channels;
+    AEQuality quality;
+    std::shared_future<std::shared_ptr<CSoundPacket>> result;
+    bool failed{false};
+  };
+  std::deque<Conversion> m_conversions;
 
   bool m_isConverted;
 };

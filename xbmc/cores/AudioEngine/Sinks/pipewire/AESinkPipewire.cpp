@@ -239,9 +239,8 @@ std::chrono::duration<double, std::ratio<1>> PWTimeToAEDelay(const pw_time& time
 }
 
 constexpr std::chrono::duration<double, std::ratio<1>> DEFAULT_BUFFER_DURATION = 0.200s;
+constexpr std::chrono::duration<double, std::ratio<1>> PCM_BUFFER_DURATION = 0.040s;
 constexpr int DEFAULT_PERIODS = 4;
-constexpr std::chrono::duration<double, std::ratio<1>> DEFAULT_PERIOD_DURATION =
-    DEFAULT_BUFFER_DURATION / DEFAULT_PERIODS;
 
 constexpr int DEFAULT_LATENCY_DIVIDER = 3;
 
@@ -422,8 +421,10 @@ bool CAESinkPipewire::Initialize(AEAudioFormat& format, std::string& device)
 
   m_stream = std::make_unique<PIPEWIRE::CPipewireStream>(core);
 
-  m_latency = DEFAULT_BUFFER_DURATION;
-  uint32_t frames = std::nearbyint(DEFAULT_PERIOD_DURATION.count() * format.m_sampleRate);
+  // GUI sounds share this stream. Keep PCM responsive without changing the
+  // buffering required by encoded passthrough formats.
+  m_latency = passthrough ? DEFAULT_BUFFER_DURATION : PCM_BUFFER_DURATION;
+  uint32_t frames = std::nearbyint(m_latency.count() / DEFAULT_PERIODS * format.m_sampleRate);
   std::string fraction =
       StringUtils::Format("{}/{}", frames / DEFAULT_LATENCY_DIVIDER, format.m_sampleRate);
 
@@ -602,7 +603,7 @@ unsigned int CAESinkPipewire::AddPackets(uint8_t** data, unsigned int frames, un
 
     const auto now = std::chrono::steady_clock::now();
 
-    if ((delay <= (DEFAULT_BUFFER_DURATION - DEFAULT_PERIOD_DURATION)) || ((now - start) >= period))
+    if ((delay <= (m_latency - period)) || ((now - start) >= period))
       break;
 
     loop.Wait(5ms);

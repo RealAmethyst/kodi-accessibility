@@ -8,6 +8,8 @@
 
 #include "VideoPlayerCodec.h"
 
+#include <chrono>
+
 #include "ServiceBroker.h"
 #include "URL.h"
 #include "cores/AudioEngine/AEResampleFactory.h"
@@ -55,6 +57,14 @@ void  VideoPlayerCodec::SetPassthroughStreamType(CAEStreamInfo::DataType streamT
 
 bool VideoPlayerCodec::Init(const CFileItem &file, unsigned int filecache)
 {
+  const auto startupStart = std::chrono::steady_clock::now();
+  const auto traceStartup = [&startupStart](const char* stage)
+  {
+    const double elapsed = std::chrono::duration<double, std::milli>(
+        std::chrono::steady_clock::now() - startupStart).count();
+    CLog::Log(elapsed > 100.0 ? LOGINFO : LOGDEBUG,
+              "Audio preparation: {} at {:.1f}ms", stage, elapsed);
+  };
   // take precaution if Init()ialized earlier
   if (m_bInited)
   {
@@ -155,6 +165,8 @@ bool VideoPlayerCodec::Init(const CFileItem &file, unsigned int filecache)
     return false;
   }
 
+  traceStartup("decoder opened");
+
   //  Extract ReplayGain info
   // tagLoaderTagLib.Load will try to determine tag type by file extension, so set fallback by contentType
   std::string strFallbackFileExtension = "";
@@ -168,6 +180,8 @@ bool VideoPlayerCodec::Init(const CFileItem &file, unsigned int filecache)
     strFallbackFileExtension = "ape";
   CTagLoaderTagLib tagLoaderTagLib;
   tagLoaderTagLib.Load(file.GetDynPath(), m_tag, strFallbackFileExtension);
+
+  traceStartup("tags loaded");
 
   // we have to decode initial data in order to get channels/samplerate
   // for sanity - we read no more than 10 packets
@@ -193,6 +207,8 @@ bool VideoPlayerCodec::Init(const CFileItem &file, unsigned int filecache)
     return false;
   }
 
+  traceStartup("initial data decoded");
+
   // test if seeking is supported
   m_bCanSeek = false;
   if (m_pInputStream->Seek(0, SEEK_POSSIBLE))
@@ -210,6 +226,8 @@ bool VideoPlayerCodec::Init(const CFileItem &file, unsigned int filecache)
         return false;
     }
   }
+
+  traceStartup("seek support checked");
 
   if (m_channels == 0) // no data - just guess and hope for the best
   {
@@ -269,6 +287,7 @@ bool VideoPlayerCodec::Init(const CFileItem &file, unsigned int filecache)
 
   m_strFileName = file.GetDynPath();
   m_bInited = true;
+  traceStartup("ready");
 
   return true;
 }

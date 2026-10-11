@@ -35,6 +35,7 @@ namespace
 {
 constexpr float MAX_CACHE_LEVEL = 0.4f; // total cache time of stream in seconds;
 constexpr float MAX_WATER_LEVEL = 0.2f; // buffered time after stream stages in seconds;
+constexpr float PIPEWIRE_PCM_WATER_LEVEL = 0.04f;
 constexpr double MAX_BUFFER_TIME = 0.1; // max time of a buffer in seconds;
 } // unnamed namespace
 
@@ -1443,6 +1444,8 @@ void CActiveAE::Configure(AEAudioFormat *desiredFmt)
       for (it = m_sounds.begin(); it != m_sounds.end(); ++it)
       {
         (*it)->SetConverted(false);
+        // Queue conversion without blocking the audio engine or the player.
+        ResampleSound(*it);
       }
     }
     m_sounds_playing.clear();
@@ -1958,7 +1961,12 @@ bool CActiveAE::RunStages()
   const bool isTrueHDPassthrough =
       (m_mode == MODE_RAW && m_sinkFormat.m_streamInfo.m_type == CAEStreamInfo::STREAM_TYPE_TRUEHD);
 
-  if ((m_stats.GetWaterLevel() < (MAX_WATER_LEVEL + 0.0001f) || isTrueHDPassthrough) &&
+  // Sounds are mixed before this queue, so buffering here adds directly to
+  // navigation latency. The stream's read/decode cache remains unchanged.
+  const float waterLevel = (m_mode == MODE_PCM && m_settings.driver == "PIPEWIRE")
+                              ? PIPEWIRE_PCM_WATER_LEVEL
+                              : MAX_WATER_LEVEL;
+  if ((m_stats.GetWaterLevel() < (waterLevel + 0.0001f) || isTrueHDPassthrough) &&
       (m_mode != MODE_TRANSCODE || (m_encoderBuffers && !m_encoderBuffers->m_freeSamples.empty())))
   {
     // calculate sync error
@@ -2575,8 +2583,11 @@ void CActiveAE::MixSounds(CSoundPacket &dstSample)
   std::list<SoundState>::iterator it;
   for (it = m_sounds_playing.begin(); it != m_sounds_playing.end(); )
   {
-    if (!it->sound->IsConverted())
-      ResampleSound(it->sound);
+    if (!it->sound->IsConverted() && !ResampleSound(it->sound))
+    {
+      ++it;
+      continue;
+    }
     int available_samples = it->sound->GetSound(false)->nb_samples - it->samples_played;
     int mix_samples = std::min(max_samples, available_samples);
     int start = it->samples_played *
@@ -3265,25 +3276,19 @@ void CActiveAE::ResampleSounds()
     if (!(*it)->IsConverted())
     {
       ResampleSound(*it);
-      // only do one sound, then yield to main loop
-      break;
     }
   }
 }
 
 bool CActiveAE::ResampleSound(CActiveAESound *sound)
 {
-  SampleConfig orig_config, dst_config;
-  uint8_t **dst_buffer;
-  int dst_samples;
+  SampleConfig dst_config;
 
   if (m_mode == MODE_RAW || m_internalFormat.m_dataFormat == AE_FMT_INVALID)
     return false;
 
   if (!sound->GetSound(true))
     return false;
-
-  orig_config = sound->GetSound(true)->config;
 
   dst_config.channel_layout = CAEUtil::GetAVChannelLayout(m_internalFormat.m_channelLayout);
   dst_config.channels = m_internalFormat.m_channelLayout.Count();
@@ -3307,34 +3312,7 @@ bool CActiveAE::ResampleSound(CActiveAESound *sound)
     }
   }
 
-  std::unique_ptr<IAEResample> resampler =
-      CAEResampleFactory::Create(AERESAMPLEFACTORY_QUICK_RESAMPLE);
-
-  resampler->Init(dst_config, orig_config,
-                  false,
-                  true,
-                  M_SQRT1_2,
-                  outChannels.Count() > 0 ? &outChannels : nullptr,
-                  m_settings.resampleQuality,
-                  false);
-
-  dst_samples = resampler->CalcDstSampleCount(sound->GetSound(true)->nb_samples,
-                                              m_internalFormat.m_sampleRate,
-                                              orig_config.sample_rate);
-
-  dst_buffer = sound->InitSound(false, dst_config, dst_samples);
-  if (!dst_buffer)
-    return false;
-
-  int samples = resampler->Resample(dst_buffer, dst_samples,
-                                    sound->GetSound(true)->data,
-                                    sound->GetSound(true)->nb_samples,
-                                    1.0);
-
-  sound->GetSound(false)->nb_samples = samples;
-
-  sound->SetConverted(true);
-  return true;
+  return sound->Convert(dst_config, outChannels, m_settings.resampleQuality);
 }
 
 //-----------------------------------------------------------------------------

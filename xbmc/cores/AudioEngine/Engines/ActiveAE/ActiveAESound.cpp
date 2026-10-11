@@ -9,6 +9,9 @@
 #include "ActiveAESound.h"
 
 #include "ActiveAE.h"
+#include "ServiceBroker.h"
+#include "cores/AudioEngine/AEResampleFactory.h"
+#include "utils/JobManager.h"
 #include "cores/AudioEngine/Interfaces/AESound.h"
 #include "filesystem/File.h"
 #include "utils/log.h"
@@ -34,8 +37,6 @@ CActiveAESound::CActiveAESound(const std::string& filename, CActiveAE* ae)
 
 CActiveAESound::~CActiveAESound()
 {
-  delete m_orig_sound;
-  delete m_dst_sound;
   Finish();
 }
 
@@ -58,14 +59,13 @@ bool CActiveAESound::IsPlaying()
 
 uint8_t** CActiveAESound::InitSound(bool orig, SampleConfig config, int nb_samples)
 {
-  CSoundPacket **info;
+  std::shared_ptr<CSoundPacket>* info;
   if (orig)
     info = &m_orig_sound;
   else
     info = &m_dst_sound;
 
-  delete *info;
-  *info = new CSoundPacket(config, nb_samples);
+  *info = std::make_shared<CSoundPacket>(config, nb_samples);
 
   (*info)->nb_samples = 0;
   m_isConverted = false;
@@ -74,7 +74,7 @@ uint8_t** CActiveAESound::InitSound(bool orig, SampleConfig config, int nb_sampl
 
 bool CActiveAESound::StoreSound(bool orig, uint8_t **buffer, int samples, int linesize)
 {
-  CSoundPacket **info;
+  std::shared_ptr<CSoundPacket>* info;
   if (orig)
     info = &m_orig_sound;
   else
@@ -103,9 +103,76 @@ bool CActiveAESound::StoreSound(bool orig, uint8_t **buffer, int samples, int li
 CSoundPacket *CActiveAESound::GetSound(bool orig)
 {
   if (orig)
-    return m_orig_sound;
+    return m_orig_sound.get();
   else
-    return m_dst_sound;
+    return m_dst_sound.get();
+}
+
+bool CActiveAESound::Convert(const SampleConfig& config,
+                             const CAEChannelInfo& channels,
+                             AEQuality quality)
+{
+  for (auto& conversion : m_conversions)
+  {
+    const auto& previous = conversion.config;
+    if (previous.fmt != config.fmt || previous.channel_layout != config.channel_layout ||
+        previous.channels != config.channels || previous.sample_rate != config.sample_rate ||
+        previous.bits_per_sample != config.bits_per_sample ||
+        previous.dither_bits != config.dither_bits || conversion.channels != channels ||
+        conversion.quality != quality)
+      continue;
+
+    if (conversion.failed)
+      return false;
+    if (conversion.result.wait_for(std::chrono::seconds(0)) != std::future_status::ready)
+      return false;
+    try
+    {
+      m_dst_sound = conversion.result.get();
+    }
+    catch (const std::exception& error)
+    {
+      CLog::Log(LOGERROR, "GUI sound conversion failed: {}", error.what());
+      conversion.failed = true;
+      return false;
+    }
+    if (!m_dst_sound)
+    {
+      CLog::Log(LOGERROR, "GUI sound conversion returned no audio");
+      conversion.failed = true;
+    }
+    m_isConverted = m_dst_sound != nullptr;
+    return m_isConverted;
+  }
+
+  // Jobs own their immutable input and result, never the sound or engine. A
+  // sound may be unloaded or its output format changed while work is running.
+  auto task = std::make_shared<std::packaged_task<std::shared_ptr<CSoundPacket>()>>(
+      [source = m_orig_sound, config, channels, quality]() mutable -> std::shared_ptr<CSoundPacket>
+      {
+        CAEChannelInfo remap = channels;
+        auto resampler = CAEResampleFactory::Create(AERESAMPLEFACTORY_QUICK_RESAMPLE);
+        if (!resampler->Init(config, source->config, false, true, M_SQRT1_2,
+                             remap.Count() ? &remap : nullptr, quality, false))
+          return {};
+        const int frames = resampler->CalcDstSampleCount(
+            source->nb_samples, config.sample_rate, source->config.sample_rate);
+        auto result = std::make_shared<CSoundPacket>(config, frames);
+        if (!result->data)
+          return {};
+        result->nb_samples = resampler->Resample(result->data, frames, source->data,
+                                                 source->nb_samples, 1.0);
+        if (result->nb_samples <= 0)
+          return {};
+        return result;
+      });
+  // Two formats cover the usual idle/music rate change without unbounded PCM
+  // retention. packaged_task futures do not join the worker when destroyed.
+  if (m_conversions.size() == 2)
+    m_conversions.pop_front();
+  m_conversions.push_back({config, channels, quality, task->get_future().share()});
+  CServiceBroker::GetJobManager()->Submit([task]() { (*task)(); }, CJob::PRIORITY_HIGH);
+  return false;
 }
 
 bool CActiveAESound::Prepare()
