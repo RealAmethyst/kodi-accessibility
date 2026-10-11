@@ -2148,15 +2148,17 @@ bool CApplication::Stop(int exitCode)
     m_ExitCode = exitCode;
     CLog::Log(LOGINFO, "Stopping all");
 
-    // cancel any jobs from the jobmanager
-    CServiceBroker::GetJobManager()->CancelJobs();
-
-    // stop scanning before we kill the network and so on
+    // Signal the scanners before waiting for the job workers. Cancelling a
+    // generic job removes its completion callback but does not stop tag reads.
+    CMusicLibraryQueue::GetInstance().StopLibraryScanning();
+    CVideoLibraryQueue::GetInstance().StopLibraryScanning();
     if (CMusicLibraryQueue::GetInstance().IsRunning())
       CMusicLibraryQueue::GetInstance().CancelAllJobs();
 
     if (CVideoLibraryQueue::GetInstance().IsRunning())
       CVideoLibraryQueue::GetInstance().CancelAllJobs();
+
+    CServiceBroker::GetJobManager()->CancelJobs();
 
     CServiceBroker::GetAppMessenger()->Cleanup();
 

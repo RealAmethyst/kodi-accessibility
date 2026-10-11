@@ -522,10 +522,9 @@ bool CPythonInvoker::stop(bool abort)
       PyThreadState* state = PyInterpreterState_ThreadHead(m_threadState->interp);
       while (state)
       {
-        // Raise a SystemExit exception in python threads
-        Py_XDECREF(state->async_exc);
-        state->async_exc = PyExc_SystemExit;
-        Py_XINCREF(state->async_exc);
+        // Use the public API so CPython also signals its evaluation loop.
+        // Assigning async_exc directly leaves newer interpreters running.
+        PyThreadState_SetAsyncExc(state->thread_id, PyExc_SystemExit);
         state = PyThreadState_Next(state);
       }
 

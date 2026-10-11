@@ -42,17 +42,19 @@ namespace XBMCAddon
   class RetardedAsyncCallbackHandler : public CallbackHandler
   {
   protected:
-    inline RetardedAsyncCallbackHandler() = default;
+    explicit RetardedAsyncCallbackHandler(void* context) : m_context(context) {}
   public:
 
     ~RetardedAsyncCallbackHandler() override;
 
     void invokeCallback(Callback* cb) override;
-    static void makePendingCalls();
+    static void makePendingCalls(void* context);
     static void clearPendingCalls(void* userData);
 
     virtual bool isStateOk(AddonClass* obj) =  0;
     virtual bool shouldRemoveCallback(AddonClass* obj, void* userData) = 0;
+  private:
+    void* const m_context;
   };
 
 }

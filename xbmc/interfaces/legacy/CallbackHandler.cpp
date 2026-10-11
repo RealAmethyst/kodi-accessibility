@@ -12,7 +12,9 @@
 #include "commons/Exception.h"
 #include "utils/log.h"
 
+#include <list>
 #include <mutex>
+#include <unordered_map>
 #include <vector>
 
 namespace XBMCAddon
@@ -26,20 +28,18 @@ namespace XBMCAddon
       cb(_cb), handler(_handler) { XBMC_TRACE; }
   };
 
-  //********************************************************************
-  // This holds the callback messages which will be executed. It doesn't
-  //  seem to work correctly with the Ref object so we'll go with Ref*'s
-  typedef std::vector<AddonClass::Ref<AsyncCallbackMessage> > CallbackQueue;
-  //********************************************************************
+  using CallbackQueue = std::list<AddonClass::Ref<AsyncCallbackMessage>>;
 
   static CCriticalSection critSection;
-  static CallbackQueue g_callQueue;
+  // Each language thread drains only its own FIFO. A dormant Monitor in a
+  // different add-on must not make every screen-reader tick scan its backlog.
+  static std::unordered_map<void*, CallbackQueue> g_callQueues;
 
   void RetardedAsyncCallbackHandler::invokeCallback(Callback* cb)
   {
     XBMC_TRACE;
     std::unique_lock<CCriticalSection> lock(critSection);
-    g_callQueue.push_back(new AsyncCallbackMessage(cb,this));
+    g_callQueues[m_context].push_back(new AsyncCallbackMessage(cb,this));
   }
 
   RetardedAsyncCallbackHandler::~RetardedAsyncCallbackHandler()
@@ -47,39 +47,51 @@ namespace XBMCAddon
     XBMC_TRACE;
     std::unique_lock<CCriticalSection> lock(critSection);
 
-    // find any messages that might be there because of me ... and remove them
-    CallbackQueue::iterator iter = g_callQueue.begin();
-    while (iter != g_callQueue.end())
+    auto queue = g_callQueues.find(m_context);
+    if (queue == g_callQueues.end())
+      return;
+    auto& calls = queue->second;
+    for (auto iter = calls.begin(); iter != calls.end();)
     {
       if ((*iter)->handler.get() == this) // then this message is because of me
-      {
-        g_callQueue.erase(iter);
-        iter = g_callQueue.begin();
-      }
+        iter = calls.erase(iter);
       else
         ++iter;
     }
+    if (calls.empty())
+      g_callQueues.erase(queue);
   }
 
-  void RetardedAsyncCallbackHandler::makePendingCalls()
+  void RetardedAsyncCallbackHandler::makePendingCalls(void* context)
   {
     XBMC_TRACE;
     std::unique_lock<CCriticalSection> lock(critSection);
-    CallbackQueue::iterator iter = g_callQueue.begin();
-    while (iter != g_callQueue.end())
+    auto queue = g_callQueues.find(context);
+    if (queue == g_callQueues.end())
+      return;
+    // Messages enqueued by a callback are handled on the next pump, allowing
+    // the caller to process navigation and abort requests between batches.
+    size_t remaining = queue->second.size();
+    while (remaining-- > 0)
     {
-      AddonClass::Ref<AsyncCallbackMessage> p(*iter);
+      queue = g_callQueues.find(context);
+      if (queue == g_callQueues.end())
+        break;
+      auto& calls = queue->second;
+      AddonClass::Ref<AsyncCallbackMessage> p(calls.front());
 
       // only call when we are in the right thread state
       if(p->handler->isStateOk(p->cb->getObject()))
       {
         // remove it from the queue. No matter what we're done with
         //  this. Even if it doesn't execute for some reason.
-        g_callQueue.erase(iter);
+        calls.pop_front();
+        if (calls.empty())
+          g_callQueues.erase(queue);
 
         // we need to release the critSection lock prior to grabbing the
-        //  lock on the object. Not doing so results in deadlocks. We no
-        //  longer are accessing the g_callQueue so it's fine to do this now
+        //  lock on the object. Not doing so results in deadlocks. No queue
+        //  references are used while the lock is released.
         {
           XBMCAddonUtils::InvertSingleLockGuard unlock(lock);
 
@@ -111,38 +123,39 @@ namespace XBMCAddon
           }
         }
 
-        // since the state of the iterator may have been corrupted by
-        //  the changing state of the list from another thread during
-        //  the releasing fo the lock in the immediately preceeding
-        //  codeblock, we need to reset it before continuing the loop
-        iter = g_callQueue.begin();
       }
       else // if we're not in the right thread for this callback...
-        ++iter;
+        calls.splice(calls.end(), calls, calls.begin());
     }
   }
 
   void RetardedAsyncCallbackHandler::clearPendingCalls(void* userData)
   {
     XBMC_TRACE;
-    std::unique_lock<CCriticalSection> lock(critSection);
-    CallbackQueue::iterator iter = g_callQueue.begin();
-    while (iter != g_callQueue.end())
+    // Hold removed messages until after the map traversal: releasing their
+    // handler can re-enter this map through its destructor.
+    std::vector<AddonClass::Ref<AsyncCallbackMessage>> removed;
     {
-      AddonClass::Ref<AsyncCallbackMessage> p(*iter);
-
-      if(p->handler->shouldRemoveCallback(p->cb->getObject(),userData))
+      std::unique_lock<CCriticalSection> lock(critSection);
+      for (auto queue = g_callQueues.begin(); queue != g_callQueues.end();)
       {
-#ifdef ENABLE_XBMC_TRACE_API
-        CLog::Log(LOGDEBUG,
-                  "{}NEWADDON removing callback 0x{:x} for PyThreadState 0x{:x} from queue",
-                  _tg.getSpaces(), (long)(p->cb.get()), (long)userData);
-#endif
-        iter = g_callQueue.erase(iter);
+        auto& calls = queue->second;
+        for (auto iter = calls.begin(); iter != calls.end();)
+        {
+          const auto& p = *iter;
+          if (p->handler->shouldRemoveCallback(p->cb->getObject(), userData))
+          {
+            removed.push_back(p);
+            iter = calls.erase(iter);
+          }
+          else
+            ++iter;
+        }
+        if (calls.empty())
+          queue = g_callQueues.erase(queue);
+        else
+          ++queue;
       }
-      else
-        ++iter;
     }
   }
 }
-
